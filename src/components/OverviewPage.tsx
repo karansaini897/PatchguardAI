@@ -157,7 +157,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           </span>
           <span aria-hidden="true">·</span>
           <span>
-            AI Provider ({health?.aiModelId || 'gemini-3.8-flash'}):{' '}
+            AI Provider ({health?.aiModelId || 'gemini-3.1-flash-lite'}):{' '}
             <strong
               className={
                 health?.aiConnectivityState === 'verified'

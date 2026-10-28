@@ -9,9 +9,10 @@ import {
   AI_MODEL_ID,
   callAiWithRetry,
   executeReviewPipeline,
+  isConfiguredGeminiApiKey,
 } from './src/lib/reviewOrchestrator';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const PORT = 3000;
 
@@ -20,11 +21,11 @@ let lastAiConnectivityMessage = '';
 
 function getAiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey.trim() === '') {
+  if (!isConfiguredGeminiApiKey(apiKey)) {
     return null;
   }
   return new GoogleGenAI({
-    apiKey,
+    apiKey: apiKey!.trim(),
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -51,10 +52,21 @@ async function invokeGeminiReviewModel(
             title: { type: Type.STRING },
             severity: {
               type: Type.STRING,
+              enum: ['critical', 'high', 'medium', 'low', 'info'],
               description: 'critical, high, medium, low, or info',
             },
             category: {
               type: Type.STRING,
+              enum: [
+                'security',
+                'concurrency',
+                'boundary',
+                'error-handling',
+                'performance',
+                'correctness',
+                'data-integrity',
+                'maintainability',
+              ],
               description:
                 'security, concurrency, boundary, error-handling, performance, correctness, data-integrity, or maintainability',
             },
@@ -63,6 +75,7 @@ async function invokeGeminiReviewModel(
             endLine: { type: Type.INTEGER },
             confidence: {
               type: Type.STRING,
+              enum: ['high', 'medium', 'low'],
               description: 'high, medium, or low',
             },
             uncertaintyNote: { type: Type.STRING },
@@ -94,9 +107,30 @@ async function invokeGeminiReviewModel(
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+      const requestId =
+        (req.headers['x-request-id'] as string) || `req-err-${Date.now().toString(36)}`;
+      res.status(400).json({
+        requestId,
+        error: {
+          category: 'INVALID_REQUEST',
+          message: 'Request body is not valid JSON.',
+          technicalDetail: 'Express JSON parser rejected malformed request payload.',
+          remediationStep: 'Ensure request payload is valid JSON with Content-Type: application/json.',
+          requestId,
+          timestamp: new Date().toISOString(),
+          retryable: false,
+          httpStatus: 400,
+        },
+      });
+      return;
+    }
+    next(err);
+  });
 
   app.get('/api/health', (_req, res) => {
-    const aiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim());
+    const aiConfigured = isConfiguredGeminiApiKey(process.env.GEMINI_API_KEY);
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),

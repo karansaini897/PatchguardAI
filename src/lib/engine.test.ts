@@ -20,8 +20,10 @@ import {
   AI_MODEL_ID,
   callAiWithRetry,
   executeReviewPipeline,
+  isConfiguredGeminiApiKey,
   parseAndValidateAiFindings,
   parseRetryAfterMs,
+  sanitizeErrorMessage,
 } from './reviewOrchestrator';
 import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData';
 import { ReviewFinding, SourceFileRecord } from '../types/patchguard';
@@ -807,5 +809,107 @@ test('11. Deduplication removes genuinely redundant findings while preserving di
   );
   assert.equal(merged[0].analysisSource, 'corroborated');
 });
+
+test('12. Phase 3 & 4 production readiness: API key placeholder rejection, secret redaction, malformed AI output handling, and enum normalization', async () => {
+  // 12a. Verify placeholder API keys from .env.example are rejected
+  assert.equal(isConfiguredGeminiApiKey(''), false);
+  assert.equal(isConfiguredGeminiApiKey(null), false);
+  assert.equal(isConfiguredGeminiApiKey('MY_GEMINI_API_KEY'), false);
+  assert.equal(isConfiguredGeminiApiKey('YOUR_API_KEY_HERE'), false);
+  assert.equal(isConfiguredGeminiApiKey('AIzaSyRealLookingTestCredentialKey99123456'), true);
+
+  // 12b. Verify secret redaction in sanitizeErrorMessage
+  assert.ok(
+    !sanitizeErrorMessage('Request failed for key=AIzaSyRealLookingTestCredentialKey99123456').includes(
+      'AIzaSyRealLookingTestCredentialKey99123456'
+    )
+  );
+
+  // 12c. Verify capitalized model enum values ("Critical", "High", "Injection") are normalized accurately
+  const parsedCapitalized = parseAndValidateAiFindings(
+    JSON.stringify([
+      {
+        title: 'SQL Injection vulnerability',
+        severity: 'Critical',
+        category: 'Injection',
+        filename: sampleVulnFile.filename,
+        startLine: 3,
+        endLine: 3,
+        confidence: 'High',
+        explanation: 'The code uses string interpolation to construct a SQL query with user-supplied input.',
+        potentialImpact: 'Arbitrary database access.',
+        suggestedRemediation: 'Use parameterized queries.',
+      },
+    ]),
+    [sampleVulnFile]
+  );
+  assert.equal(parsedCapitalized.quarantinedCount, 0);
+  assert.equal(parsedCapitalized.findings[0].severity, 'critical');
+  assert.equal(parsedCapitalized.findings[0].confidence, 'high');
+  assert.equal(parsedCapitalized.findings[0].category, 'security');
+
+  // 12d. Verify malformed/unusable model output is not retried and falls back to static analysis in hybrid mode (or fails in ai-only mode)
+  let malformedAttempts = 0;
+  const malformedHybridRes = await executeReviewPipeline(
+    {
+      title: 'Malformed JSON Hybrid Test',
+      objective: 'Verify malformed model response handling',
+      focusAreas: ['security'],
+      files: [
+        {
+          id: sampleVulnFile.id,
+          filename: sampleVulnFile.filename,
+          language: sampleVulnFile.language,
+          content: sampleVulnFile.content,
+        },
+      ],
+      analysisMode: 'hybrid',
+    },
+    {
+      requestId: 'req-malformed-hybrid',
+      invokeAiModel: async (_prompt, attempt) => {
+        malformedAttempts = attempt;
+        return '{not_valid_json: [unclosed';
+      },
+    }
+  );
+  assert.equal(malformedAttempts, 1, 'Malformed JSON schema error is permanent and must not be retried');
+  assert.equal(malformedHybridRes.ok, true);
+  if (malformedHybridRes.ok) {
+    assert.equal(malformedHybridRes.review.status, 'completed_with_warnings');
+    const aiStage = malformedHybridRes.review.stages.find((s) => s.stageId === 'stage-ai')!;
+    assert.equal(aiStage.status, 'failed');
+    assert.equal(aiStage.errorCode, 'INVALID_MODEL_RESPONSE');
+    assert.ok(malformedHybridRes.review.findings.every((f) => f.analysisSource === 'static-pattern'));
+  }
+
+  // 12e. Verify AI-only mode when Gemini is not configured returns HTTP 503 MISSING_SERVER_CONFIG
+  const aiOnlyNoKeyRes = await executeReviewPipeline(
+    {
+      title: 'AI Only Unconfigured Test',
+      objective: 'Verify AI-only mode without server key fails cleanly',
+      focusAreas: ['security'],
+      files: [
+        {
+          id: sampleVulnFile.id,
+          filename: sampleVulnFile.filename,
+          language: sampleVulnFile.language,
+          content: sampleVulnFile.content,
+        },
+      ],
+      analysisMode: 'ai-only',
+    },
+    {
+      requestId: 'req-ai-only-no-key',
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(aiOnlyNoKeyRes.ok, false);
+  if (!aiOnlyNoKeyRes.ok) {
+    assert.equal(aiOnlyNoKeyRes.httpStatus, 503);
+    assert.equal(aiOnlyNoKeyRes.error.category, 'MISSING_SERVER_CONFIG');
+  }
+});
+
 
 

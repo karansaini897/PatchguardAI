@@ -40,7 +40,7 @@ export async function fetchSystemHealth(): Promise<SystemHealthStatus> {
         (data.aiProviderConfigured
           ? 'API key present in server environment; live model connectivity not yet probed in this session.'
           : 'GEMINI_API_KEY not detected in server environment; reviews default to deterministic static analyzer or Completed with Warnings.'),
-      aiModelId: data.aiModelId || 'gemini-3.8-flash',
+      aiModelId: data.aiModelId || 'gemini-3.1-flash-lite',
       staticEngineAvailable: Boolean(data.staticEngineAvailable),
       staticEngineVersion: data.staticEngineVersion || 'pg-static-ast-1.4.2',
       persistenceMode: storageHealthy ? 'browser-local-storage' : 'memory-fallback',
@@ -54,7 +54,7 @@ export async function fetchSystemHealth(): Promise<SystemHealthStatus> {
       aiProviderConfigured: false,
       aiConnectivityState: 'failed',
       aiConnectivityMessage: 'Backend server unreachable on /api/health.',
-      aiModelId: 'gemini-3.8-flash',
+      aiModelId: 'gemini-3.1-flash-lite',
       staticEngineAvailable: false,
       staticEngineVersion: 'pg-static-ast-1.4.2',
       persistenceMode: storageHealthy ? 'browser-local-storage' : 'memory-fallback',

@@ -183,7 +183,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
           {/* 2. AI Provider Configuration vs Connectivity */}
           <div className="p-4 space-y-2">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
-              AI PROVIDER ({health?.aiModelId || 'gemini-3.8-flash'})
+              AI PROVIDER ({health?.aiModelId || 'gemini-3.1-flash-lite'})
             </div>
             <div className="font-mono text-xs space-y-0.5">
               <div>

@@ -232,7 +232,7 @@ export const ISOLATED_DEMO_REVIEW: ReviewRecord = {
     {
       stageId: 'stage-ai',
       name: 'Gemini Semantic Code Reasoning',
-      engine: 'gemini-3.8-flash',
+      engine: 'gemini-3.1-flash-lite',
       status: 'skipped',
       durationMs: 0,
       findingsProduced: 0,
