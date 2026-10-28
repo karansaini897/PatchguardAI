@@ -4,7 +4,11 @@ import {
   SeverityLevel,
   SourceFileRecord,
 } from '../types/patchguard';
-import { compareSeverity } from '../lib/staticAnalyzer';
+import {
+  compareSeverity,
+  resolveTargetSourceFile,
+  verifyFindingLocationIntegrity,
+} from '../lib/staticAnalyzer';
 import { SEVERITY_META, SeverityLabel } from './SeverityIndicator';
 import { AlertTriangle, FileCode, CheckCircle2 } from 'lucide-react';
 
@@ -15,6 +19,22 @@ interface SourceViewerProps {
   findings: ReviewFinding[];
   selectedFinding: ReviewFinding | null;
   onSelectFinding: (finding: ReviewFinding) => void;
+}
+
+function isFindingAssociatedWithFile(
+  finding: ReviewFinding,
+  file: SourceFileRecord,
+  allFiles: SourceFileRecord[]
+): boolean {
+  const resolved = resolveTargetSourceFile(
+    allFiles,
+    finding.location.fileId,
+    finding.location.filename
+  );
+  if (resolved) {
+    return resolved.id === file.id;
+  }
+  return false;
 }
 
 /**
@@ -94,13 +114,23 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
+  // Verify every finding's location integrity against the current files (fileId, filename, contentHash, line bounds)
+  const verifiedFindings = useMemo(
+    () =>
+      findings.map((f) => ({
+        ...f,
+        location: verifyFindingLocationIntegrity(f, files),
+      })),
+    [findings, files]
+  );
+
   // Map valid findings per line for the active file
   const lineFindingsMap = useMemo(() => {
     const map = new Map<number, ReviewFinding[]>();
     if (!activeFile) return map;
 
-    for (const f of findings) {
-      if (f.location.filename !== activeFile.filename) continue;
+    for (const f of verifiedFindings) {
+      if (!isFindingAssociatedWithFile(f, activeFile, files)) continue;
       if (!f.location.isValidLocation) continue;
       const lineNum = f.location.startLine;
       const list = map.get(lineNum) || [];
@@ -108,26 +138,39 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       map.set(lineNum, list);
     }
     return map;
-  }, [findings, activeFile]);
+  }, [verifiedFindings, activeFile, files]);
 
-  // Invalid-location findings targeting this file
+  // Invalid-location findings targeting this file (or targeting an unmatched file)
   const invalidFindingsForFile = useMemo(() => {
     if (!activeFile) return [];
-    return findings.filter(
-      (f) => f.location.filename === activeFile.filename && !f.location.isValidLocation
+    return verifiedFindings.filter(
+      (f) =>
+        !f.location.isValidLocation &&
+        (isFindingAssociatedWithFile(f, activeFile, files) ||
+          f.location.locationReason === 'wrong_file')
     );
-  }, [findings, activeFile]);
+  }, [verifiedFindings, activeFile, files]);
+
+  const verifiedSelectedFinding = useMemo(() => {
+    if (!selectedFinding) return null;
+    return (
+      verifiedFindings.find((vf) => vf.id === selectedFinding.id) || {
+        ...selectedFinding,
+        location: verifyFindingLocationIntegrity(selectedFinding, files),
+      }
+    );
+  }, [selectedFinding, verifiedFindings, files]);
 
   // Scroll to active finding line inside the code container without scrolling the window header
   useEffect(() => {
     if (
-      selectedFinding &&
+      verifiedSelectedFinding &&
       activeFile &&
-      selectedFinding.location.filename === activeFile.filename &&
-      selectedFinding.location.isValidLocation &&
+      isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) &&
+      verifiedSelectedFinding.location.isValidLocation &&
       viewportRef.current
     ) {
-      const targetEl = lineRefs.current[selectedFinding.location.startLine];
+      const targetEl = lineRefs.current[verifiedSelectedFinding.location.startLine];
       const container = viewportRef.current;
       if (targetEl) {
         const targetTop = targetEl.offsetTop - container.offsetTop;
@@ -135,7 +178,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
         container.scrollTo({ top: desiredScroll, behavior: 'smooth' });
       }
     }
-  }, [selectedFinding, activeFile]);
+  }, [verifiedSelectedFinding, activeFile, files]);
 
   if (!activeFile) {
     return (
@@ -167,7 +210,9 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
           aria-label="Reviewed source files"
         >
           {files.map((file) => {
-            const fileFindings = findings.filter((f) => f.location.filename === file.filename);
+            const fileFindings = verifiedFindings.filter((f) =>
+              isFindingAssociatedWithFile(f, file, files)
+            );
             const unreviewedCount = fileFindings.filter((f) => f.status === 'unreviewed').length;
             const isSelected = file.id === activeFile.id;
 
@@ -203,9 +248,10 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       </div>
 
       {/* Out-of-bounds / Invalid Location Quarantine Notice */}
-      {selectedFinding &&
-        selectedFinding.location.filename === activeFile.filename &&
-        !selectedFinding.location.isValidLocation && (
+      {verifiedSelectedFinding &&
+        !verifiedSelectedFinding.location.isValidLocation &&
+        (isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) ||
+          verifiedSelectedFinding.location.locationReason === 'wrong_file') && (
           <div
             role="alert"
             className="px-3 py-2.5 bg-[var(--pg-warning-subtle)] border-b border-[var(--pg-border-default)] flex items-start gap-2.5 text-xs"
@@ -213,11 +259,19 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
             <AlertTriangle className="w-4 h-4 text-[var(--pg-warning)] shrink-0 mt-0.5" />
             <div className="space-y-0.5">
               <div className="font-semibold text-[var(--pg-text-primary)]">
-                Source Location Unavailable (Line L{selectedFinding.location.startLine} Out of Bounds)
+                Source Location Quarantined (
+                {verifiedSelectedFinding.location.locationReason === 'wrong_file'
+                  ? `Unmatched File: ${verifiedSelectedFinding.location.filename}`
+                  : verifiedSelectedFinding.location.locationReason === 'source_changed'
+                  ? 'Source Content Modified After Analysis'
+                  : verifiedSelectedFinding.location.locationReason === 'missing_line'
+                  ? 'Missing Line Reference'
+                  : `Line L${verifiedSelectedFinding.location.startLine} Out of Bounds`}
+                )
               </div>
               <p className="text-[var(--pg-text-secondary)] leading-relaxed">
-                {selectedFinding.location.validationNote ||
-                  `The selected finding references line ${selectedFinding.location.startLine}, which does not exist in ${activeFile.filename} (${lines.length} lines). Approximate highlighting is disabled.`}
+                {verifiedSelectedFinding.location.validationNote ||
+                  `The selected finding references line ${verifiedSelectedFinding.location.startLine}, which cannot be verified in ${activeFile.filename} (${lines.length} lines). Approximate highlighting is disabled.`}
               </p>
             </div>
           </div>
@@ -234,11 +288,11 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
             const lineNumber = idx + 1;
             const attachedFindings = lineFindingsMap.get(lineNumber) || [];
             const isSelectedRange =
-              selectedFinding &&
-              selectedFinding.location.filename === activeFile.filename &&
-              selectedFinding.location.isValidLocation &&
-              lineNumber >= selectedFinding.location.startLine &&
-              lineNumber <= selectedFinding.location.endLine;
+              verifiedSelectedFinding &&
+              isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) &&
+              verifiedSelectedFinding.location.isValidLocation &&
+              lineNumber >= verifiedSelectedFinding.location.startLine &&
+              lineNumber <= verifiedSelectedFinding.location.endLine;
 
             // Highest severity on this line
             let topSeverity: SeverityLevel | null = null;

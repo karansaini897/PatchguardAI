@@ -18,6 +18,14 @@ export type SupportedLanguage = 'typescript' | 'javascript' | 'python' | 'java' 
 
 export type FileChangeStatus = 'modified' | 'added' | 'snippet';
 
+export type LocationValidationReason =
+  | 'verified'
+  | 'out_of_bounds'
+  | 'wrong_file'
+  | 'missing_line'
+  | 'source_changed'
+  | 'insufficient_evidence';
+
 export interface SourceFileRecord {
   id: string;
   filename: string;
@@ -25,6 +33,7 @@ export interface SourceFileRecord {
   content: string;
   lineCount: number;
   changeStatus: FileChangeStatus;
+  contentHash?: string;
 }
 
 export interface FindingLocation {
@@ -34,6 +43,8 @@ export interface FindingLocation {
   endLine: number;
   isValidLocation: boolean;
   rawSnippet: string;
+  contentHash?: string;
+  locationReason?: LocationValidationReason;
   validationNote?: string;
 }
 

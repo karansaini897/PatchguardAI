@@ -2,8 +2,14 @@ import {
   EvaluationTestCase,
   FindingCategory,
   ReviewRecord,
+  SourceFileRecord,
   SupportedLanguage,
 } from '../types/patchguard';
+import {
+  computeSourceContentHash,
+  runStaticAnalysisOnFiles,
+  STATIC_ANALYZER_VERSION,
+} from './staticAnalyzer';
 
 export interface CodeExampleSnippet {
   id: string;
@@ -176,230 +182,63 @@ public class OrderAllocator {
   },
 ];
 
+const DEMO_PR_418_FILES: SourceFileRecord[] = CURATED_CODE_SNIPPETS[0].files.map((f) => {
+  const cleanContent = f.content.replace(/\r\n/g, '\n');
+  return {
+    id: f.id,
+    filename: f.filename,
+    language: f.language,
+    changeStatus: f.changeStatus,
+    content: cleanContent,
+    lineCount: cleanContent.split('\n').length,
+    contentHash: computeSourceContentHash(cleanContent),
+  };
+});
+
+const DEMO_PR_418_FINDINGS = runStaticAnalysisOnFiles(
+  DEMO_PR_418_FILES,
+  CURATED_CODE_SNIPPETS[0].focusAreas
+);
+
 /**
- * Isolated demonstration review record.
- * Clearly flagged with `isDemoRecord: true` and never silently mixed into real history unless explicitly opened by the user.
- * Includes a finding with an out-of-bounds line citation (L84 on a 33-line file) to demonstrate PatchGuard's evidence integrity guard.
+ * Isolated demonstration review record for PR #418.
+ * Generated deterministically by running `runStaticAnalysisOnFiles` on the actual PR #418 source files
+ * (`src/ledger/payoutController.ts` and `src/ledger/adminOverride.ts`) with verified content hashes and line bounds.
+ * Contains zero fabricated findings or unverified AI claims.
  */
 export const ISOLATED_DEMO_REVIEW: ReviewRecord = {
   id: 'rev-demo-418-isolated',
   title: '[DEMO] PR #418: Settle multi-tenant merchant payouts & batch reconciliation',
   createdAt: '2026-10-27T18:15:00.000Z',
-  durationMs: 842,
-  status: 'completed_with_warnings',
-  objective:
-    'Investigate tenant isolation boundaries, SQL query construction, non-atomic balance mutations across async boundaries, and loop index bounds.',
-  focusAreas: ['security', 'concurrency', 'boundary', 'error-handling'],
-  requestId: 'req-demo-88412a',
-  modelUsed: 'gemini-3.8-flash + pg-static-ast-1.4.2',
+  durationMs: 12,
+  status: 'completed_static_only',
+  objective: CURATED_CODE_SNIPPETS[0].objective,
+  focusAreas: CURATED_CODE_SNIPPETS[0].focusAreas,
+  requestId: 'req-demo-static-418',
+  modelUsed: `${STATIC_ANALYZER_VERSION} (Static Analysis Only)`,
   isDemoRecord: true,
-  warningMessage:
-    'Demonstration record: 1 finding returned an out-of-bounds line reference (L84 in a 33-line file) and was quarantined by the location verifier.',
-  files: [
-    {
-      id: 'demo-file-1',
-      filename: 'src/ledger/payoutController.ts',
-      language: 'typescript',
-      changeStatus: 'modified',
-      lineCount: 33,
-      content: CURATED_CODE_SNIPPETS[0].files[0].content,
-    },
-    {
-      id: 'demo-file-2',
-      filename: 'src/ledger/adminOverride.ts',
-      language: 'typescript',
-      changeStatus: 'added',
-      lineCount: 9,
-      content: CURATED_CODE_SNIPPETS[0].files[1].content,
-    },
-  ],
+  files: DEMO_PR_418_FILES,
   stages: [
     {
-      stageId: 'stg-static',
-      name: 'Deterministic Pattern & AST Pass',
-      engine: 'pg-static-ast-1.4.2',
+      stageId: 'stage-static',
+      name: 'Deterministic Pattern & Structural Analysis',
+      engine: STATIC_ANALYZER_VERSION,
       status: 'succeeded',
-      durationMs: 18,
-      findingsProduced: 5,
+      durationMs: 12,
+      findingsProduced: DEMO_PR_418_FINDINGS.length,
+      attempts: 1,
+      retriedCount: 0,
     },
     {
-      stageId: 'stg-ai',
-      name: 'Semantic Code Reasoning Pass',
+      stageId: 'stage-ai',
+      name: 'Gemini Semantic Code Reasoning',
       engine: 'gemini-3.8-flash',
-      status: 'warning',
-      durationMs: 824,
-      findingsProduced: 4,
-      errorMessage:
-        '1 model-proposed finding referenced line 84 (file has 33 lines); location marked unavailable.',
+      status: 'skipped',
+      durationMs: 0,
+      findingsProduced: 0,
     },
   ],
-  findings: [
-    {
-      id: 'demo-fnd-1',
-      title: 'Unsanitized SQL query interpolation allows arbitrary command injection',
-      severity: 'critical',
-      category: 'security',
-      status: 'unreviewed',
-      analysisSource: 'corroborated',
-      confidence: 'high',
-      uncertaintyNote:
-        'Independently corroborated by both PatchGuard Static Analyzer (PG-SEC-001) and Gemini AI semantic analysis.',
-      location: {
-        fileId: 'demo-file-1',
-        filename: 'src/ledger/payoutController.ts',
-        startLine: 12,
-        endLine: 13,
-        isValidLocation: true,
-        rawSnippet:
-          "  const lookupSql = `SELECT id, balance_cents, status FROM merchant_accounts WHERE tenant_id = '${req.tenantId}' AND id = '${req.accountId}'`;\n  const account = await db.getBalance(lookupSql);",
-      },
-      explanation:
-        '`req.tenantId` and `req.accountId` are interpolated directly into `lookupSql` via a template literal before execution. No parameterization or escaping is applied.',
-      potentialImpact:
-        'An attacker can supply a crafted `tenantId` (e.g., `\' OR 1=1 --`) to read balance state from arbitrary merchant accounts across tenants or execute stacked queries.',
-      suggestedRemediation:
-        'Pass `req.tenantId` and `req.accountId` as bound parameters to a prepared statement rather than interpolating them into the SQL string.',
-      remediationCode:
-        'const lookupSql = `SELECT id, balance_cents, status FROM merchant_accounts WHERE tenant_id = $1 AND id = $2`;\nconst account = await db.getBalance(lookupSql, [req.tenantId, req.accountId]);',
-      staticCorroboration: {
-        ruleId: 'PG-SEC-001',
-        engineName: 'PatchGuard Static Analyzer (pg-static-ast-1.4.2)',
-        matchedPattern:
-          "const lookupSql = `SELECT id, balance_cents, status FROM merchant_accounts WHERE tenant_id = '${req.tenantId}' AND id = '${req.accountId}'`;",
-        deterministicConfidence: 'high',
-      },
-      createdAt: '2026-10-27T18:15:00.000Z',
-      updatedAt: '2026-10-27T18:15:00.000Z',
-    },
-    {
-      id: 'demo-fnd-2',
-      title: 'Non-atomic read-modify-write balance deduction enables double-payout race condition',
-      severity: 'high',
-      category: 'concurrency',
-      status: 'unreviewed',
-      analysisSource: 'corroborated',
-      confidence: 'high',
-      uncertaintyNote:
-        'Corroborated by PG-CONC-002 and AI control-flow analysis across `await db.getBalance` and `await db.updateBalance`.',
-      location: {
-        fileId: 'demo-file-1',
-        filename: 'src/ledger/payoutController.ts',
-        startLine: 13,
-        endLine: 27,
-        isValidLocation: true,
-        rawSnippet:
-          "  const account = await db.getBalance(lookupSql);\n\n  if (!account || account.balance_cents < req.amountCents) {\n    throw new Error('Insufficient merchant balance for requested payout');\n  }\n\n  // Reconcile line items sequentially\n  for (let i = 0; i <= req.lineItems.length; i++) {\n    const itemId = req.lineItems[i];\n    await db.query(`UPDATE payout_items SET reconciled = true WHERE id = '${itemId}'`);\n  }\n\n  try {\n    const nextBalance = account.balance_cents - req.amountCents;\n    await db.updateBalance(req.accountId, nextBalance);",
-      },
-      explanation:
-        '`account.balance_cents` is read at line 13, followed by multiple asynchronous `await db.query` network hops before computing `nextBalance = account.balance_cents - req.amountCents` and writing it at line 27 without a transaction or row lock.',
-      potentialImpact:
-        'Concurrent payout requests for the same `accountId` will read the same initial `balance_cents`, pass the balance check simultaneously, and overwrite each other’s deduction.',
-      suggestedRemediation:
-        'Execute the balance check and deduction atomically in a single `UPDATE ... WHERE balance_cents >= $1 RETURNING *` statement or inside a serializable transaction with `SELECT ... FOR UPDATE`.',
-      remediationCode:
-        'const updated = await db.query(\n  `UPDATE merchant_accounts SET balance_cents = balance_cents - $1 WHERE tenant_id = $2 AND id = $3 AND balance_cents >= $1 RETURNING balance_cents`,\n  [req.amountCents, req.tenantId, req.accountId]\n);',
-      staticCorroboration: {
-        ruleId: 'PG-CONC-002',
-        engineName: 'PatchGuard Static Analyzer (pg-static-ast-1.4.2)',
-        matchedPattern: 'const account = await db.getBalance(lookupSql);',
-        deterministicConfidence: 'high',
-      },
-      createdAt: '2026-10-27T18:15:00.000Z',
-      updatedAt: '2026-10-27T18:15:00.000Z',
-    },
-    {
-      id: 'demo-fnd-3',
-      title: 'Inclusive loop upper bound (`i <= req.lineItems.length`) reads past array end',
-      severity: 'high',
-      category: 'boundary',
-      status: 'unreviewed',
-      analysisSource: 'static-pattern',
-      confidence: 'high',
-      location: {
-        fileId: 'demo-file-1',
-        filename: 'src/ledger/payoutController.ts',
-        startLine: 20,
-        endLine: 23,
-        isValidLocation: true,
-        rawSnippet:
-          "  for (let i = 0; i <= req.lineItems.length; i++) {\n    const itemId = req.lineItems[i];\n    await db.query(`UPDATE payout_items SET reconciled = true WHERE id = '${itemId}'`);\n  }",
-      },
-      explanation:
-        'The loop condition `i <= req.lineItems.length` executes one extra iteration where `i === req.lineItems.length`, evaluating `req.lineItems[i]` as `undefined`.',
-      potentialImpact:
-        'Executes a bogus `UPDATE payout_items SET reconciled = true WHERE id = \'undefined\'` query on every payout call.',
-      suggestedRemediation:
-        'Replace `i <= req.lineItems.length` with `i < req.lineItems.length`, and batch the update using `WHERE id = ANY($1)`.',
-      staticCorroboration: {
-        ruleId: 'PG-BND-003',
-        engineName: 'PatchGuard Static Analyzer (pg-static-ast-1.4.2)',
-        matchedPattern: 'for (let i = 0; i <= req.lineItems.length; i++) {',
-        deterministicConfidence: 'high',
-      },
-      createdAt: '2026-10-27T18:15:00.000Z',
-      updatedAt: '2026-10-27T18:15:00.000Z',
-    },
-    {
-      id: 'demo-fnd-4',
-      title: 'Hardcoded live signing secret literal in adminOverride.ts',
-      severity: 'critical',
-      category: 'security',
-      status: 'unreviewed',
-      analysisSource: 'static-pattern',
-      confidence: 'high',
-      location: {
-        fileId: 'demo-file-2',
-        filename: 'src/ledger/adminOverride.ts',
-        startLine: 3,
-        endLine: 3,
-        isValidLocation: true,
-        rawSnippet: 'const FALLBACK_SIGNING_SECRET = "pg_live_sec_9948102948102948102948ab";',
-      },
-      explanation:
-        '`FALLBACK_SIGNING_SECRET` embeds a high-entropy live credential directly inside versioned source code.',
-      potentialImpact:
-        'Secret leakage through repository clones, CI logs, or compiled artifacts allows unauthorized signature forgery.',
-      suggestedRemediation:
-        'Require `process.env.SIGNING_SECRET` at process initialization and fail fast if absent.',
-      staticCorroboration: {
-        ruleId: 'PG-SEC-005',
-        engineName: 'PatchGuard Static Analyzer (pg-static-ast-1.4.2)',
-        matchedPattern: 'const FALLBACK_SIGNING_SECRET = "pg_live_sec_9948102948102948102948ab";',
-        deterministicConfidence: 'high',
-      },
-      createdAt: '2026-10-27T18:15:00.000Z',
-      updatedAt: '2026-10-27T18:15:00.000Z',
-    },
-    {
-      id: 'demo-fnd-5',
-      title: 'Unverified model hypothesis: Missing idempotency key expiration index',
-      severity: 'low',
-      category: 'maintainability',
-      status: 'unreviewed',
-      analysisSource: 'ai-gemini',
-      confidence: 'low',
-      uncertaintyNote:
-        'Model-only reasoning with invalid source line citation (L84). Treat as unverified hypothesis because referenced schema file is not part of this diff.',
-      location: {
-        fileId: 'demo-file-1',
-        filename: 'src/ledger/payoutController.ts',
-        startLine: 84,
-        endLine: 88,
-        isValidLocation: false,
-        rawSnippet: '',
-        validationNote:
-          'Referenced line range L84–L88 is outside valid bounds (1–33) for src/ledger/payoutController.ts. PatchGuard suppresses approximate line highlighting to preserve evidence integrity.',
-      },
-      explanation:
-        'The AI model hypothesized that idempotency keys may accumulate without a TTL index, but cited lines 84–88 which do not exist in the submitted 33-line file.',
-      potentialImpact:
-        'No confirmed impact in the submitted diff; demonstrates how PatchGuard isolates ungrounded model claims from verified source evidence.',
-      suggestedRemediation:
-        'Verify database migration files separately if idempotency storage is introduced.',
-      createdAt: '2026-10-27T18:15:00.000Z',
-      updatedAt: '2026-10-27T18:15:00.000Z',
-    },
-  ],
+  findings: DEMO_PR_418_FINDINGS,
 };
 
 export const INITIAL_EVALUATION_TEST_CASES: EvaluationTestCase[] = [

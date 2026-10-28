@@ -12,6 +12,10 @@ import {
   filterFindings,
   FindingFilterCriteria,
 } from '../lib/evaluationMath';
+import {
+  resolveTargetSourceFile,
+  verifyFindingLocationIntegrity,
+} from '../lib/staticAnalyzer';
 import { persistence } from '../lib/persistence';
 import { SourceViewer } from './SourceViewer';
 import {
@@ -73,40 +77,58 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     searchQuery: '',
   });
 
+  // Re-verify all findings against the loaded source files and their content hashes
+  const verifiedFindings: ReviewFinding[] = useMemo(() => {
+    if (!review) return [];
+    return review.findings.map((f) => ({
+      ...f,
+      location: verifyFindingLocationIntegrity(f, review.files),
+    }));
+  }, [review]);
+
   useEffect(() => {
     if (!review) return;
     if (review.files.length > 0) {
       setActiveFileId(review.files[0].id);
     }
     if (initialSelectedFindingId) {
-      const target = review.findings.find((f) => f.id === initialSelectedFindingId);
+      const target = verifiedFindings.find((f) => f.id === initialSelectedFindingId);
       if (target) {
         setSelectedFindingId(target.id);
-        const matchingFile = review.files.find((fl) => fl.filename === target.location.filename);
+        const matchingFile = resolveTargetSourceFile(
+          review.files,
+          target.location.fileId,
+          target.location.filename
+        );
         if (matchingFile) setActiveFileId(matchingFile.id);
         return;
       }
     }
-    if (review.findings.length > 0) {
-      setSelectedFindingId(review.findings[0].id);
+    if (verifiedFindings.length > 0) {
+      setSelectedFindingId(verifiedFindings[0].id);
+      const firstFile = resolveTargetSourceFile(
+        review.files,
+        verifiedFindings[0].location.fileId,
+        verifiedFindings[0].location.filename
+      );
+      if (firstFile) setActiveFileId(firstFile.id);
     } else {
       setSelectedFindingId(null);
     }
-  }, [review?.id, initialSelectedFindingId]);
+  }, [review?.id, initialSelectedFindingId, verifiedFindings]);
 
   const filteredFindings = useMemo(() => {
-    if (!review) return [];
-    return filterFindings(review.findings, filters);
-  }, [review, filters]);
+    return filterFindings(verifiedFindings, filters);
+  }, [verifiedFindings, filters]);
 
   const selectedFinding: ReviewFinding | null = useMemo(() => {
-    if (!review || !selectedFindingId) return null;
-    return review.findings.find((f) => f.id === selectedFindingId) || null;
-  }, [review, selectedFindingId]);
+    if (!selectedFindingId) return null;
+    return verifiedFindings.find((f) => f.id === selectedFindingId) || null;
+  }, [verifiedFindings, selectedFindingId]);
 
   const distribution = useMemo(
-    () => computeSeverityDistribution(review?.findings || []),
-    [review?.findings]
+    () => computeSeverityDistribution(verifiedFindings),
+    [verifiedFindings]
   );
 
   const hasActiveFilters =
@@ -131,7 +153,11 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   const handleSelectFinding = (finding: ReviewFinding) => {
     setSelectedFindingId(finding.id);
     if (review) {
-      const targetFile = review.files.find((f) => f.filename === finding.location.filename);
+      const targetFile = resolveTargetSourceFile(
+        review.files,
+        finding.location.fileId,
+        finding.location.filename
+      );
       if (targetFile) {
         setActiveFileId(targetFile.id);
       }
@@ -494,7 +520,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             files={review.files}
             activeFileId={activeFileId}
             onSelectFile={setActiveFileId}
-            findings={review.findings}
+            findings={verifiedFindings}
             selectedFinding={selectedFinding}
             onSelectFinding={handleSelectFinding}
           />
@@ -718,7 +744,9 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                                 ? `–${finding.location.endLine}`
                                 : ''
                             }`
-                          : `L${finding.location.startLine} (Invalid)`}
+                          : finding.location.startLine > 0
+                          ? `L${finding.location.startLine} (Quarantined)`
+                          : 'Quarantined'}
                       </span>
                     </div>
 
@@ -890,8 +918,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const targetFile = review.files.find(
-                          (f) => f.filename === selectedFinding.location.filename
+                        const targetFile = resolveTargetSourceFile(
+                          review.files,
+                          selectedFinding.location.fileId,
+                          selectedFinding.location.filename
                         );
                         if (targetFile) setActiveFileId(targetFile.id);
                         setMobileTab('source');
@@ -908,7 +938,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     </button>
                   ) : (
                     <span className="font-mono text-[11px] text-[var(--pg-warning)] whitespace-nowrap">
-                      Location Unavailable (L{selectedFinding.location.startLine})
+                      Location Quarantined (
+                      {selectedFinding.location.locationReason || 'unverified'})
                     </span>
                   )}
                 </div>

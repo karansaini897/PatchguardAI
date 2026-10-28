@@ -2,6 +2,7 @@ import {
   AnalysisStageReport,
   ApiErrorCategory,
   FindingCategory,
+  FindingLocation,
   ReviewExecutionStatus,
   ReviewFinding,
   ReviewRecord,
@@ -11,7 +12,10 @@ import {
   StructuredApiError,
 } from '../types/patchguard';
 import {
+  computeSourceContentHash,
+  createQuarantinedFindingLocation,
   mergeAndCorroborateFindings,
+  resolveTargetSourceFile,
   runStaticAnalysisOnFiles,
   STATIC_ANALYZER_VERSION,
   validateAndNormalizeFindingLocation,
@@ -186,7 +190,7 @@ export function classifyAiError(
   const retryAfterMs = parseRetryAfterMs(err, nowMs, maxRetryAfterMs);
   const anyErr = (err && typeof err === 'object' ? err : {}) as Record<string, any>;
 
-  // 1. Schema / Malformed JSON Response Error (Permanent - do not retry malformed output unless configured)
+  // 1. Schema / Malformed JSON Response Error (Permanent - do not retry malformed output)
   if (
     anyErr.isSchemaValidationError === true ||
     upperMsg.includes('MODEL RESPONSE ROOT IS NOT A JSON ARRAY') ||
@@ -336,7 +340,6 @@ export function computeBackoffDelayMs(
   const boundedExp = Math.min(maxDelayMs, Math.round(expDelay + jitter));
 
   if (retryAfterMs !== null && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-    // Respect server-provided Retry-After while enforcing a strict upper bound
     return Math.min(maxRetryAfterMs, Math.max(boundedExp, retryAfterMs));
   }
 
@@ -378,7 +381,6 @@ export async function callAiWithRetry<T>(
   operation: (attempt: number) => Promise<T>,
   options?: RetryPolicyOptions
 ): Promise<AiRetryResult<T>> {
-  // Enforce bounded retries: minimum 1 attempt, maximum 5 attempts
   const configuredMaxAttempts = options?.maxAttempts ?? DEFAULT_RETRY_CONFIG.maxAttempts;
   const maxAttempts = Math.max(1, Math.min(5, Math.floor(configuredMaxAttempts)));
   const perAttemptTimeoutMs =
@@ -411,7 +413,7 @@ export async function callAiWithRetry<T>(
         break;
       }
 
-      const retryNumber = attempt; // 1 for first retry, 2 for second retry
+      const retryNumber = attempt;
       const delayMs = computeBackoffDelayMs(
         retryNumber,
         classified.retryAfterMs,
@@ -694,7 +696,7 @@ export function buildAiPromptForFiles(
         .split('\n')
         .map((line, i) => `${i + 1}: ${line}`)
         .join('\n');
-      return `=== FILE: ${file.filename} (Language: ${file.language}, Total Lines: ${file.lineCount}) ===\n${numberedLines}`;
+      return `=== FILE: ${file.filename} (FileID: ${file.id}, Language: ${file.language}, Total Lines: ${file.lineCount}, ContentHash: ${file.contentHash}) ===\n${numberedLines}`;
     })
     .join('\n\n');
 
@@ -707,17 +709,31 @@ Focus Categories: ${(payload.focusAreas || []).join(', ') || 'all categories'}
 
 Strict Rules:
 1. Only report substantive, evidence-backed technical findings grounded in specific line numbers from the provided source code.
-2. Do NOT invent hypothetical issues for lines that do not exist.
-3. For each finding, provide exact 1-indexed startLine and endLine matching the numbered source lines.
+2. Do NOT invent hypothetical issues for lines or files that do not exist in the submission.
+3. For each finding, provide the exact filename and exact 1-indexed startLine and endLine matching the numbered source lines.
 
 Source Files:
 ${numberedFilesPrompt}`;
 }
 
+function hasExecutableCodeEvidence(snippet: string): boolean {
+  const lines = (snippet || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !/^(\/\/|#|--|\/\*|\*)/.test(l));
+  return lines.length > 0;
+}
+
+export interface ParsedAiFindingsSummary {
+  findings: ReviewFinding[];
+  quarantinedCount: number;
+  quarantineReasons: string[];
+}
+
 export function parseAndValidateAiFindings(
   rawText: string,
   normalizedFiles: SourceFileRecord[]
-): { findings: ReviewFinding[]; invalidLineCount: number } {
+): ParsedAiFindingsSummary {
   let parsedItems: unknown;
   try {
     parsedItems = JSON.parse((rawText || '[]').trim());
@@ -738,7 +754,8 @@ export function parseAndValidateAiFindings(
   }
 
   const now = new Date().toISOString();
-  let invalidLineCount = 0;
+  let quarantinedCount = 0;
+  const quarantineReasons: string[] = [];
 
   const validSeverities: SeverityLevel[] = ['critical', 'high', 'medium', 'low', 'info'];
   const validCategories: FindingCategory[] = [
@@ -753,49 +770,138 @@ export function parseAndValidateAiFindings(
   ];
 
   const findings: ReviewFinding[] = parsedItems.map((item: any, idx: number): ReviewFinding => {
-    const matchedFile =
-      normalizedFiles.find((f) => f.filename === item?.filename) || normalizedFiles[0];
-    const loc = validateAndNormalizeFindingLocation(
-      matchedFile,
-      Number(item?.startLine),
-      Number(item?.endLine)
+    const requestedFileId = typeof item?.fileId === 'string' ? item.fileId : undefined;
+    const requestedFilename = typeof item?.filename === 'string' ? item.filename : undefined;
+
+    // Strictly resolve target file; never fall back to normalizedFiles[0] when filename mismatches
+    const matchedFile = resolveTargetSourceFile(
+      normalizedFiles,
+      requestedFileId,
+      requestedFilename
     );
-    if (!loc.isValidLocation) {
-      invalidLineCount++;
+
+    const parsedStart =
+      item?.startLine !== undefined && item?.startLine !== null && item?.startLine !== ''
+        ? Number(item.startLine)
+        : undefined;
+    const parsedEnd =
+      item?.endLine !== undefined && item?.endLine !== null && item?.endLine !== ''
+        ? Number(item.endLine)
+        : undefined;
+
+    let loc: FindingLocation;
+
+    if (!matchedFile) {
+      const displayFile = requestedFilename || requestedFileId || 'unreferenced-file';
+      loc = createQuarantinedFindingLocation({
+        fileId: 'unmatched-file',
+        filename: displayFile,
+        rawStartLine: parsedStart,
+        rawEndLine: parsedEnd,
+        reason: 'wrong_file',
+        validationNote: `Referenced file "${displayFile}" is not present in the submitted review files (${normalizedFiles
+          .map((f) => f.filename)
+          .join(', ')}). PatchGuard quarantined this location instead of attributing it to another file.`,
+      });
+      quarantinedCount++;
+      quarantineReasons.push(`wrong_file (${displayFile})`);
+    } else {
+      loc = validateAndNormalizeFindingLocation(matchedFile, parsedStart, parsedEnd);
+      if (!loc.isValidLocation) {
+        quarantinedCount++;
+        quarantineReasons.push(
+          `${loc.locationReason || 'invalid_line'} (${matchedFile.filename}:L${String(
+            item?.startLine
+          )})`
+        );
+      } else if (!hasExecutableCodeEvidence(loc.rawSnippet)) {
+        loc = createQuarantinedFindingLocation({
+          fileId: matchedFile.id,
+          filename: matchedFile.filename,
+          rawStartLine: loc.startLine,
+          rawEndLine: loc.endLine,
+          reason: 'insufficient_evidence',
+          validationNote: `Referenced lines L${loc.startLine}–L${loc.endLine} in ${matchedFile.filename} contain only comments or whitespace and lack executable code evidence.`,
+        });
+        quarantinedCount++;
+        quarantineReasons.push(`insufficient_evidence (${matchedFile.filename}:L${loc.startLine})`);
+      }
     }
 
-    const sev: SeverityLevel = validSeverities.includes(item?.severity)
+    const explanationText = String(item?.explanation || '').trim();
+    const hasSubstantiveExplanation = explanationText.length >= 12;
+    if (loc.isValidLocation && !hasSubstantiveExplanation) {
+      loc = createQuarantinedFindingLocation({
+        fileId: loc.fileId,
+        filename: loc.filename,
+        rawStartLine: loc.startLine,
+        rawEndLine: loc.endLine,
+        reason: 'insufficient_evidence',
+        validationNote:
+          'Finding did not include a substantive technical explanation supporting the vulnerability claim.',
+      });
+      quarantinedCount++;
+      quarantineReasons.push(`insufficient_explanation (${loc.filename}:L${loc.startLine})`);
+    }
+
+    const rawSev: SeverityLevel = validSeverities.includes(item?.severity)
       ? item.severity
       : 'medium';
+    const rawConf: 'high' | 'medium' | 'low' = ['high', 'medium', 'low'].includes(
+      item?.confidence
+    )
+      ? item.confidence
+      : 'medium';
+
+    // Calibrate severity & confidence: do not blindly trust high/critical model severity without verified code evidence
+    let calibratedSeverity: SeverityLevel = rawSev;
+    let calibratedConfidence: 'high' | 'medium' | 'low' = rawConf;
+    let calibrationNote = '';
+
+    if (!loc.isValidLocation) {
+      calibratedConfidence = 'low';
+      if (rawSev === 'critical' || rawSev === 'high' || rawSev === 'medium') {
+        calibratedSeverity = 'low';
+        calibrationNote = ` [Severity downgraded from ${rawSev.toUpperCase()} to LOW because source location/evidence could not be verified (${
+          loc.locationReason || 'unverified'
+        }).]`;
+      }
+    } else if ((rawSev === 'critical' || rawSev === 'high') && rawConf === 'low') {
+      calibratedSeverity = 'medium';
+      calibrationNote = ` [Severity calibrated from ${rawSev.toUpperCase()} to MEDIUM because model reported LOW confidence without deterministic static corroboration.]`;
+    }
 
     const cat: FindingCategory = validCategories.includes(item?.category)
       ? item.category
       : 'correctness';
 
+    const baseUncertainty =
+      item?.uncertaintyNote ||
+      'Generated by Gemini 3.8 Flash semantic reasoning; verify call-site invariants before applying remediation.';
+
     return {
       id: `fnd-ai-${Date.now().toString(36)}-${idx}`,
       title: String(item?.title || 'Unnamed finding'),
-      severity: sev,
+      severity: calibratedSeverity,
       category: cat,
       status: 'unreviewed',
       analysisSource: 'ai-gemini',
-      confidence: ['high', 'medium', 'low'].includes(item?.confidence)
-        ? item.confidence
-        : 'medium',
-      uncertaintyNote:
-        item?.uncertaintyNote ||
-        'Generated by Gemini 3.8 Flash semantic reasoning; verify call-site invariants before applying remediation.',
+      confidence: calibratedConfidence,
+      uncertaintyNote: `${baseUncertainty}${calibrationNote}`,
       location: loc,
-      explanation: String(item?.explanation || ''),
-      potentialImpact: String(item?.potentialImpact || ''),
-      suggestedRemediation: String(item?.suggestedRemediation || ''),
+      explanation:
+        explanationText || 'No technical explanation provided by model (quarantined).',
+      potentialImpact: String(item?.potentialImpact || 'Unverified operational impact.'),
+      suggestedRemediation: String(
+        item?.suggestedRemediation || 'Verify source lines manually before modifying code.'
+      ),
       remediationCode: item?.remediationCode ? String(item.remediationCode) : undefined,
       createdAt: now,
       updatedAt: now,
     };
   });
 
-  return { findings, invalidLineCount };
+  return { findings, quarantinedCount, quarantineReasons };
 }
 
 export interface ExecuteReviewPipelineOptions {
@@ -805,6 +911,13 @@ export interface ExecuteReviewPipelineOptions {
    * When null/undefined, indicates GEMINI_API_KEY is not configured on the server.
    */
   invokeAiModel?: ((prompt: string, attempt: number) => Promise<string>) | null;
+  /**
+   * Optional override for deterministic static analysis (used for testing static engine failures).
+   */
+  runStaticAnalysisFn?: (
+    files: SourceFileRecord[],
+    focusAreas?: FindingCategory[]
+  ) => ReviewFinding[];
   retryOptions?: RetryPolicyOptions;
   onAiConnectivityUpdate?: (
     state: 'verified' | 'failed',
@@ -824,6 +937,7 @@ export type ExecuteReviewPipelineOutcome =
       httpStatus: number;
       error: StructuredApiError;
       requestId: string;
+      failedReview?: ReviewRecord;
     };
 
 export async function executeReviewPipeline(
@@ -831,7 +945,13 @@ export async function executeReviewPipeline(
   options: ExecuteReviewPipelineOptions
 ): Promise<ExecuteReviewPipelineOutcome> {
   const requestStart = Date.now();
-  const { requestId, invokeAiModel, retryOptions, onAiConnectivityUpdate } = options;
+  const {
+    requestId,
+    invokeAiModel,
+    runStaticAnalysisFn = runStaticAnalysisOnFiles,
+    retryOptions,
+    onAiConnectivityUpdate,
+  } = options;
 
   if (payload?.simulateFailureMode) {
     const sim = buildSimulatedError(payload.simulateFailureMode, requestId);
@@ -869,6 +989,7 @@ export async function executeReviewPipeline(
       content: cleanContent,
       lineCount: cleanContent.split('\n').length,
       changeStatus: f.changeStatus || 'modified',
+      contentHash: computeSourceContentHash(cleanContent),
     };
   });
 
@@ -876,24 +997,53 @@ export async function executeReviewPipeline(
   const stages: AnalysisStageReport[] = [];
   let staticFindings: ReviewFinding[] = [];
   let aiFindings: ReviewFinding[] = [];
-  let warningMessage: string | undefined;
+  const warnings: string[] = [];
   let errorDetails: StructuredApiError | undefined;
+  let staticSucceeded = false;
   let aiSucceeded = false;
+  let totalQuarantinedCount = 0;
 
   // Stage 1: Deterministic Static Analysis
   if (analysisMode === 'hybrid' || analysisMode === 'static-only') {
     const stgStart = Date.now();
-    staticFindings = runStaticAnalysisOnFiles(normalizedFiles, payload.focusAreas);
-    stages.push({
-      stageId: 'stage-static',
-      name: 'Deterministic Pattern & Structural Analysis',
-      engine: STATIC_ANALYZER_VERSION,
-      status: 'succeeded',
-      durationMs: Math.max(4, Date.now() - stgStart),
-      findingsProduced: staticFindings.length,
-      attempts: 1,
-      retriedCount: 0,
-    });
+    try {
+      staticFindings = runStaticAnalysisFn(normalizedFiles, payload.focusAreas);
+      const staticQuarantined = staticFindings.filter(
+        (f) => !f.location.isValidLocation
+      ).length;
+      totalQuarantinedCount += staticQuarantined;
+      staticSucceeded = true;
+
+      stages.push({
+        stageId: 'stage-static',
+        name: 'Deterministic Pattern & Structural Analysis',
+        engine: STATIC_ANALYZER_VERSION,
+        status: staticQuarantined > 0 ? 'warning' : 'succeeded',
+        durationMs: Math.max(4, Date.now() - stgStart),
+        findingsProduced: staticFindings.length,
+        attempts: 1,
+        retriedCount: 0,
+        errorMessage:
+          staticQuarantined > 0
+            ? `${staticQuarantined} static finding(s) had invalid locations and were quarantined.`
+            : undefined,
+      });
+    } catch (staticErr: any) {
+      const cleanMsg = sanitizeErrorMessage(staticErr);
+      stages.push({
+        stageId: 'stage-static',
+        name: 'Deterministic Pattern & Structural Analysis',
+        engine: STATIC_ANALYZER_VERSION,
+        status: 'failed',
+        durationMs: Math.max(4, Date.now() - stgStart),
+        findingsProduced: 0,
+        attempts: 1,
+        retriedCount: 0,
+        errorCode: 'STATIC_STAGE_FAILED',
+        errorMessage: `Deterministic static analyzer failed: ${cleanMsg.slice(0, 140)}`,
+      });
+      warnings.push(`Static analysis stage failed (${cleanMsg.slice(0, 90)}).`);
+    }
   } else {
     stages.push({
       stageId: 'stage-static',
@@ -934,8 +1084,9 @@ export async function executeReviewPipeline(
         errorMessage:
           'GEMINI_API_KEY is not configured on the server; semantic AI stage was skipped and review completed with deterministic static analysis.',
       });
-      warningMessage =
-        'Partially completed review: AI semantic stage skipped (GEMINI_API_KEY not configured on server). Showing verified findings from deterministic static analysis only.';
+      warnings.push(
+        'Partially completed review: AI semantic stage skipped (GEMINI_API_KEY not configured on server). Showing verified findings from deterministic static analysis only.'
+      );
     } else {
       const prompt = buildAiPromptForFiles(payload, normalizedFiles);
 
@@ -950,7 +1101,8 @@ export async function executeReviewPipeline(
       if (retryResult.ok && retryResult.value) {
         aiSucceeded = true;
         aiFindings = retryResult.value.findings;
-        const invalidLineCount = retryResult.value.invalidLineCount;
+        const aiQuarantined = retryResult.value.quarantinedCount;
+        totalQuarantinedCount += aiQuarantined;
 
         onAiConnectivityUpdate?.(
           'verified',
@@ -963,26 +1115,32 @@ export async function executeReviewPipeline(
           retryResult.retriedCount > 0
             ? `Succeeded on attempt ${retryResult.attemptsMade} after ${retryResult.retriedCount} transient retry(s).`
             : undefined;
-        const lineNote =
-          invalidLineCount > 0
-            ? `${invalidLineCount} finding(s) cited line numbers outside file bounds and were flagged by the location verifier.`
+        const quarantineNote =
+          aiQuarantined > 0
+            ? `${aiQuarantined} finding(s) quarantined by location/evidence verifier [${retryResult.value.quarantineReasons.join(
+                ', '
+              )}].`
             : undefined;
 
         stages.push({
           stageId: 'stage-ai',
           name: 'Gemini Semantic Code Reasoning',
           engine: AI_MODEL_ID,
-          status: invalidLineCount > 0 ? 'warning' : 'succeeded',
+          status: aiQuarantined > 0 ? 'warning' : 'succeeded',
           durationMs: Math.max(10, Date.now() - aiStart),
           findingsProduced: aiFindings.length,
           attempts: retryResult.attemptsMade,
           retriedCount: retryResult.retriedCount,
           httpStatus: 200,
-          errorMessage: [retryNote, lineNote].filter(Boolean).join(' ') || undefined,
+          errorMessage: [retryNote, quarantineNote].filter(Boolean).join(' ') || undefined,
         });
 
-        if (invalidLineCount > 0) {
-          warningMessage = `${invalidLineCount} AI finding(s) referenced out-of-bounds line numbers and were marked with unavailable source locations.`;
+        if (aiQuarantined > 0) {
+          warnings.push(
+            `${aiQuarantined} AI finding(s) failed source-location or evidence verification (${retryResult.value.quarantineReasons.join(
+              ', '
+            )}) and were quarantined.`
+          );
         }
       } else {
         const classified = retryResult.error!;
@@ -1000,15 +1158,6 @@ export async function executeReviewPipeline(
             120
           )}`
         );
-
-        if (analysisMode === 'ai-only') {
-          return {
-            ok: false,
-            httpStatus: structuredErr.httpStatus || 502,
-            error: structuredErr,
-            requestId,
-          };
-        }
 
         const attemptPhrase =
           retryResult.attemptsMade > 1
@@ -1030,10 +1179,12 @@ export async function executeReviewPipeline(
           errorMessage: `AI model stage failed ${attemptPhrase} (${classified.errorCode}: ${classified.sanitizedMessage.slice(
             0,
             120
-          )}); preserved deterministic Static Analyzer findings.`,
+          )}).`,
         });
 
-        warningMessage = `Partially completed review: AI semantic stage failed ${attemptPhrase} (${classified.errorCode}). Showing verified findings from deterministic static analysis only.`;
+        warnings.push(
+          `Partially completed review: AI semantic stage failed ${attemptPhrase} (${classified.errorCode}). Showing verified findings from deterministic static analysis only.`
+        );
       }
     }
   } else {
@@ -1047,6 +1198,50 @@ export async function executeReviewPipeline(
     });
   }
 
+  // If ALL active engines failed (no stage succeeded), mark review as failed and return structured failure
+  const anyEngineSucceeded = staticSucceeded || aiSucceeded;
+  if (!anyEngineSucceeded) {
+    const fallbackError: StructuredApiError =
+      errorDetails || {
+        category: 'INCOMPLETE_ANALYSIS',
+        message: 'All configured analysis engines failed to complete the review.',
+        technicalDetail: warnings.join(' ') || 'Neither static nor AI analysis succeeded.',
+        remediationStep:
+          'Inspect System Diagnostics for stage error details and retry the review.',
+        requestId,
+        timestamp: new Date().toISOString(),
+        retryable: true,
+        httpStatus: 502,
+      };
+
+    const failedReview: ReviewRecord = {
+      id: `rev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      title: payload.title?.trim() || `Review of ${normalizedFiles[0].filename}`,
+      createdAt: new Date().toISOString(),
+      durationMs: Math.max(8, Date.now() - requestStart),
+      status: 'failed',
+      objective:
+        payload.objective?.trim() ||
+        'Investigate code changes for security, concurrency, boundary, and error-handling risks.',
+      focusAreas: payload.focusAreas || [],
+      files: normalizedFiles,
+      findings: [],
+      stages,
+      requestId,
+      modelUsed: 'None (All Analysis Engines Failed)',
+      warningMessage: fallbackError.message,
+      errorDetails: fallbackError,
+    };
+
+    return {
+      ok: false,
+      httpStatus: fallbackError.httpStatus || 502,
+      error: fallbackError,
+      requestId,
+      failedReview,
+    };
+  }
+
   const mergedFindings = mergeAndCorroborateFindings(staticFindings, aiFindings);
 
   // Determine accurate final review status and model attribution without ever implying AI succeeded when it failed
@@ -1054,19 +1249,21 @@ export async function executeReviewPipeline(
   let modelUsed: string;
 
   if (analysisMode === 'static-only') {
-    finalStatus = 'completed_static_only';
+    finalStatus = totalQuarantinedCount > 0 ? 'completed_with_warnings' : 'completed_static_only';
     modelUsed = `${STATIC_ANALYZER_VERSION} (Static Analysis Only)`;
   } else if (analysisMode === 'ai-only') {
-    const hasStageWarning = stages.some((s) => s.status === 'warning');
+    const hasStageWarning =
+      totalQuarantinedCount > 0 || stages.some((s) => s.status === 'warning');
     finalStatus = hasStageWarning ? 'completed_with_warnings' : 'completed';
     modelUsed = AI_MODEL_ID;
   } else {
     // Hybrid mode
-    if (aiSucceeded) {
-      const hasStageWarning = stages.some((s) => s.status === 'warning');
+    if (aiSucceeded && staticSucceeded) {
+      const hasStageWarning =
+        totalQuarantinedCount > 0 || stages.some((s) => s.status === 'warning');
       finalStatus = hasStageWarning ? 'completed_with_warnings' : 'completed';
       modelUsed = `${AI_MODEL_ID} + ${STATIC_ANALYZER_VERSION}`;
-    } else {
+    } else if (staticSucceeded && !aiSucceeded) {
       finalStatus = 'completed_with_warnings';
       const aiStage = stages.find((s) => s.stageId === 'stage-ai');
       const reason =
@@ -1074,6 +1271,9 @@ export async function executeReviewPipeline(
           ? `${AI_MODEL_ID} skipped`
           : `${AI_MODEL_ID} failed`;
       modelUsed = `${STATIC_ANALYZER_VERSION} (Fallback — ${reason})`;
+    } else {
+      finalStatus = 'completed_with_warnings';
+      modelUsed = `${AI_MODEL_ID} (Fallback — ${STATIC_ANALYZER_VERSION} failed)`;
     }
   }
 
@@ -1092,7 +1292,7 @@ export async function executeReviewPipeline(
     stages,
     requestId,
     modelUsed,
-    warningMessage,
+    warningMessage: warnings.length > 0 ? warnings.join(' ') : undefined,
     errorDetails,
   };
 
