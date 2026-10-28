@@ -1,0 +1,1221 @@
+PATCHGUARD AI
+
+PRINCIPAL-LEVEL PRODUCT DESIGN, ADVANCED FRONTEND ARCHITECTURE, AND ENGINEERING WORKSPACE
+
+You are a principal product designer, distinguished frontend architect, developer-experience engineer, design systems specialist, and software engineering product strategist.
+
+You are building PatchGuard AI, an AI-powered code review and software quality intelligence platform.
+
+Approach this project with the ambition and discipline of an experienced team building a serious developer product intended for professional engineers.
+
+Do not constrain the frontend to the minimum interface necessary to support an AI API.
+
+Do not prioritise speed of implementation over the quality of the experience.
+
+Do not assume that an attractive dashboard is sufficient.
+
+I want an interface that demonstrates sophisticated product thinking, exceptional visual design, deep attention to technical workflows, and the engineering discipline necessary to support a complex application.
+
+The user is an experienced backend engineer. Design for someone who values precise information, system transparency, predictable interactions, detailed diagnostics, control over automation, and an interface that never conceals important implementation details behind meaningless visual polish.
+
+The frontend should make the backend engineer want to invest time in completing the system because the interface provides a compelling environment in which to operate it.
+
+The design must be distinctive, technically credible, visually sophisticated, and memorable.
+
+Build the actual application in the available project environment. Do not return a design proposal instead of implementing it.
+
+Inspect the existing codebase before making changes. Preserve any existing functionality that is worth retaining, and adapt the implementation to the available framework.
+
+If the environment cannot support a requested feature, explain the limitation and implement a sensible alternative.
+
+Do not fabricate functionality, backend integrations, evaluation results, or system health.
+
+The interface should communicate both the ambition of the product and the actual state of its implementation.
+
+⸻
+
+01. PRODUCT IDENTITY AND DESIGN THESIS
+
+Product: PatchGuard AI
+
+Category: AI-assisted code review, defect investigation, and software quality intelligence.
+
+Core statement:
+
+“Understand the change. Find the risk. Review with evidence.”
+
+Supporting statement:
+
+“An engineering workspace for investigating code changes, validating automated findings, and understanding the risks hidden inside a pull request.”
+
+The product is not a chatbot with a code editor attached.
+
+It is not a static vulnerability dashboard.
+
+It is not an analytics template.
+
+It is an investigation environment for software changes.
+
+The central design principle is:
+
+EVERY IMPORTANT CLAIM MUST HAVE A PATH TO EVIDENCE.
+
+A finding should lead to the relevant source code.
+
+A severity rating should be accompanied by an explanation.
+
+A review summary should lead to the findings that support it.
+
+A failed analysis should reveal what failed.
+
+A system-health indicator should represent an actual observable state.
+
+An AI suggestion should remain distinguishable from a confirmed defect.
+
+The interface should help engineers move from a high-level understanding of a change to the precise lines and reasoning that require their attention.
+
+Design the entire experience around that principle.
+
+⸻
+
+02. VISUAL DIRECTION: TECHNICAL EDITORIALISM
+
+Develop an original visual language called Technical Editorialism.
+
+The direction combines:
+
+* The precision of a professional code editor.
+* The information density of an engineering observability platform.
+* The clarity of an incident-investigation interface.
+* The visual hierarchy of a carefully typeset technical publication.
+* The responsiveness and finish of a premium desktop application.
+
+The result must feel like a purpose-built product rather than a collection of components selected from a UI library.
+
+Use deliberate contrast between typography, code surfaces, information panels, and supporting metadata.
+
+Allow technical information to establish the visual identity.
+
+Use real source code, structured findings, meaningful identifiers, and precise technical labels as part of the interface itself.
+
+Do not fill empty areas with arbitrary graphics.
+
+Do not use generic AI illustrations.
+
+Do not use glowing brains, floating robots, meaningless network diagrams, or decorative representations of intelligence.
+
+Do not use a full-screen gradient as a substitute for a visual identity.
+
+Do not cover the application in glassmorphism.
+
+Do not place every element inside a rounded card.
+
+Do not create the familiar generic SaaS layout consisting of a sidebar, four identical metric cards, and a large chart.
+
+Instead, establish a recognisable visual language through typography, geometry, surface treatments, information density, and the way the application presents evidence.
+
+The result should remain visually coherent even when all decorative elements are removed.
+
+2.1 Colour system
+
+Create a dark-first design system with a carefully controlled palette.
+
+Use:
+
+* Deep graphite for the application canvas.
+* Layered charcoal for major workspaces.
+* Slightly lighter surfaces for active panels.
+* Warm off-white for primary text.
+* Muted cool gray for secondary information.
+* Restrained chartreuse for primary actions and important active states.
+* Muted blue for navigation, technical references, and informational states.
+* Amber for warnings.
+* Red for serious defects.
+* Green for successful operations and validated positive states.
+
+Use semantic design tokens.
+
+Define tokens for:
+
+* Application backgrounds.
+* Raised surfaces.
+* Interactive surfaces.
+* Borders.
+* Text hierarchy.
+* Focus rings.
+* Severity levels.
+* Success, warning, and error states.
+* Selection and hover.
+* Charts and visualisations.
+
+Do not use the accent colour everywhere.
+
+Use it to establish hierarchy and guide attention.
+
+The interface must not look like a neon gaming dashboard.
+
+Avoid unnecessary outer glows, saturated gradients, excessive shadows, and decorative outlines.
+
+Use subtle tonal differences to create depth.
+
+Borders should be visible enough to establish structure without making the interface resemble a spreadsheet.
+
+Provide a complete light theme with independently considered contrast and surface hierarchy.
+
+Do not simply invert the dark theme.
+
+Persist the selected theme.
+
+Dark mode should be the initial default.
+
+2.2 Typography
+
+Typography is a primary design element.
+
+Choose a highly legible sans-serif typeface for the interface and a professional monospace typeface for source code, identifiers, line numbers, technical metadata, and logs.
+
+Use typography to distinguish:
+
+* Page-level context.
+* Major findings.
+* Technical explanations.
+* Secondary metadata.
+* Source-code evidence.
+* System status.
+* Interactive controls.
+
+Use compact, carefully spaced headings rather than oversized marketing typography.
+
+Use tabular numerals where numbers need to align.
+
+Ensure source-code line numbers are visually distinct from source content.
+
+Use italics, uppercase labels, or condensed metadata sparingly.
+
+Never reduce technical information to unreadable text just to increase apparent sophistication.
+
+2.3 Geometry and composition
+
+Establish a consistent spacing and sizing system.
+
+Use deliberate relationships between:
+
+* Navigation.
+* Workspaces.
+* Source-code surfaces.
+* Findings.
+* Supporting panels.
+* Dialogs.
+* Tables.
+* Technical metadata.
+
+Avoid arbitrary differences in padding and border radius.
+
+Use square or subtly rounded technical surfaces where appropriate.
+
+Reserve larger radii for the few places where they serve a clear interaction or compositional purpose.
+
+Allow some sections to use open layouts without enclosing every element.
+
+Use alignment, whitespace, dividers, and surface contrast to organise information.
+
+Do not force the same layout onto every screen.
+
+A review workspace and a settings page should not look structurally identical.
+
+⸻
+
+03. THE SIGNATURE EXPERIENCE: THE REVIEW WORKSPACE
+
+This is the most important part of PatchGuard AI.
+
+The main review workspace must be compelling enough that a developer would genuinely want to spend time using it.
+
+Do not make the primary experience a form that produces a list of AI suggestions.
+
+Build a sophisticated code investigation environment.
+
+3.1 Workspace composition
+
+On desktop, use a carefully balanced, resizable multi-panel layout.
+
+The primary workspace should contain three functional regions:
+
+A. SOURCE AND CHANGE CONTEXT
+
+B. FINDINGS AND REVIEW SUMMARY
+
+C. SELECTED FINDING DETAILS AND EVIDENCE
+
+The precise proportions may vary based on the screen width and the selected mode.
+
+The source and findings areas should receive the majority of the available space.
+
+The detail panel should provide enough width to read explanations and remediation without forcing excessive wrapping.
+
+The layout must feel deliberate at common laptop resolutions.
+
+Support resizing where practical.
+
+If panels can be resized, implement the interaction correctly and persist useful layout preferences when appropriate.
+
+Provide sensible minimum widths.
+
+Prevent panels from collapsing into unusable slivers.
+
+When the viewport is too narrow for three columns, transition into a responsive arrangement rather than shrinking every panel.
+
+The mobile experience should preserve the essential workflow, even if the desktop composition cannot be reproduced exactly.
+
+3.2 Source navigation
+
+Provide a clear source-navigation region when a review contains multiple files.
+
+Display:
+
+* Filename.
+* File extension or language.
+* Change status where applicable.
+* Finding count for that file.
+* Relevant review status.
+
+Use meaningful indicators rather than decorative icons.
+
+Support selecting a file to update the source viewer.
+
+Do not display fabricated repository files when the user has only submitted a single code snippet.
+
+If repository integration has not been implemented, use the available source input to populate the workspace.
+
+If multiple files are supported later, design the data model so the interface can accommodate them without being rebuilt.
+
+3.3 Source viewer
+
+Use an established code-editor or syntax-highlighting component where appropriate.
+
+Prefer a reliable, maintainable editor integration over a custom imitation of a complete IDE.
+
+The source viewer should support:
+
+* Syntax highlighting.
+* Line numbers.
+* Source selection where useful.
+* Distinct active-line styling.
+* Finding markers in the gutter where supported.
+* Highlighting the selected finding’s relevant lines.
+* Long-line handling.
+* Clear separation between source and annotations.
+* Readable code typography.
+* Keyboard accessibility.
+
+When a finding is selected, navigate to its relevant source location if that location is valid.
+
+Keep the selected finding visually connected to the highlighted code.
+
+If a finding references a line that does not exist, do not highlight a nearby line.
+
+Display the location as unavailable or invalid and record the inconsistency where appropriate.
+
+When a source file is too long to render efficiently, use appropriate virtualisation or another scalable approach.
+
+Do not render an enormous source file in a way that freezes the interface.
+
+3.4 Finding markers
+
+Introduce a restrained system of source annotations.
+
+Where supported, display finding markers next to the relevant lines.
+
+Markers should communicate the presence and severity of a finding without overwhelming the code.
+
+When multiple findings refer to the same line, aggregate their markers sensibly.
+
+Clicking a marker should select the associated finding or reveal the findings attached to that line.
+
+Hovering should provide a short accessible summary.
+
+Do not use hover as the only way to access important information.
+
+Provide keyboard-accessible alternatives.
+
+Do not introduce source markers unless the source viewer can map them to actual finding locations.
+
+⸻
+
+04. FINDINGS AS AN INVESTIGATION SYSTEM
+
+4.1 Finding list
+
+Design the findings region as a high-quality technical investigation list.
+
+Each finding should include:
+
+* Severity.
+* Category.
+* Short, specific title.
+* Source location.
+* Concise explanation.
+* Review status.
+* Confidence information where available.
+
+Use a hierarchy that makes scanning easy.
+
+Avoid presenting each finding as a large, identical card.
+
+Use compact rows or structured sections with clear separation.
+
+Serious findings should be easy to locate, but lower-severity findings should not become visually invisible.
+
+Use colour, typography, labels, and iconography together to communicate severity.
+
+Do not rely on colour alone.
+
+4.2 Finding details
+
+When a finding is selected, open a detail panel or structured detail view.
+
+Include the following sections when the information exists:
+
+1. Finding summary.
+2. Severity and category.
+3. Source location.
+4. Evidence.
+5. Explanation.
+6. Potential impact.
+7. Suggested remediation.
+8. Confidence and uncertainty.
+9. Review status.
+10. Relevant analysis metadata.
+
+The layout must distinguish direct source evidence from the model’s interpretation.
+
+Use clear labels such as “Source evidence”, “Why this may be a problem”, and “Suggested remediation”.
+
+Do not present model-generated explanations as independently verified facts.
+
+If static analysis corroborates a finding, identify the actual tool and result.
+
+If a finding is based only on model reasoning, make that clear.
+
+If evidence is insufficient, show the uncertainty instead of inventing missing details.
+
+4.3 Finding actions
+
+Provide meaningful actions, including:
+
+* Mark as reviewed.
+* Reopen.
+* Dismiss.
+* Copy finding details.
+* Copy suggested remediation.
+* Navigate to source.
+* Expand evidence.
+
+Only implement actions that have defined behaviour.
+
+Persist review status using the available storage mechanism.
+
+Provide clear confirmation for destructive actions where appropriate.
+
+Do not equate dismissing a finding with proving it is false.
+
+Do not automatically mark a finding as resolved merely because a suggested fix has been copied.
+
+If applying patches is introduced in a future stage, require an explicit user action and validate the proposed change.
+
+4.4 Investigation filters
+
+Provide efficient filters for:
+
+* Severity.
+* Category.
+* File.
+* Status.
+* Analysis source, if multiple analysis engines exist.
+
+Use compact filter controls.
+
+Make active filters visible.
+
+Provide a straightforward way to clear filters.
+
+When filters produce no results, distinguish between an empty review and a review whose findings have been filtered out.
+
+Persist filter preferences only when doing so improves the workflow.
+
+Avoid adding controls that have no effect on the underlying findings.
+
+⸻
+
+05. REVIEW SUMMARY AND ANALYSIS TRANSPARENCY
+
+Create a review summary that communicates the outcome without pretending to prove more than the analysis establishes.
+
+Display:
+
+* Review status.
+* Number of findings.
+* Severity distribution.
+* Files analysed.
+* Duration when measured accurately.
+* Analysis sources actually used.
+* Errors or incomplete operations.
+
+The summary should lead users toward investigation, not simply display impressive-looking numbers.
+
+Use compact visualisations only where they communicate meaningful information.
+
+For example, a severity distribution can be represented with a carefully designed horizontal bar, provided its segments correspond to actual findings.
+
+Do not create a decorative chart that communicates no useful information.
+
+Do not show fabricated performance scores.
+
+Do not display an arbitrary “AI confidence score” for the entire review unless the value has a defined, defensible meaning.
+
+If the review is incomplete, communicate that state clearly.
+
+If the AI service succeeds but a static-analysis tool fails, do not report that all analysis stages succeeded.
+
+Distinguish:
+
+* Completed.
+* Completed with warnings.
+* Failed.
+* Cancelled.
+* In progress.
+
+Only show statuses supported by the actual execution state.
+
+⸻
+
+06. A PURPOSE-BUILT OVERVIEW
+
+The Overview page must be designed around the lifecycle of a review.
+
+Do not reproduce a generic analytics dashboard.
+
+6.1 Opening composition
+
+Create a refined opening section with:
+
+* A concise workspace title.
+* A brief explanation of the current workspace.
+* A prominent new-review action.
+* A subtle indicator of the actual backend or model configuration status where available.
+
+Avoid marketing copy that consumes half the screen.
+
+The user should be able to reach the primary action immediately.
+
+6.2 Review activity
+
+Show review activity derived from actual stored records.
+
+Possible information includes:
+
+* Reviews completed.
+* Reviews requiring attention.
+* Findings awaiting investigation.
+* Recent review activity.
+
+Do not fill the interface with random values.
+
+If no review history exists, present a designed first-use experience.
+
+If historical data is incomplete, identify the limitation.
+
+6.3 Review timeline
+
+Create a meaningful review-activity timeline or chronological list.
+
+Each entry should communicate:
+
+* Review identifier or title.
+* Source or filename.
+* Timestamp.
+* Outcome.
+* Findings count.
+* Relevant action.
+
+Make entries navigable.
+
+Ensure that timestamps use a consistent and understandable format.
+
+6.4 Attention queue
+
+Create a compact attention queue for unresolved high-priority findings.
+
+It should prioritise findings that the user has not yet reviewed.
+
+Clicking an entry should open the relevant review and selected finding.
+
+If no findings require attention, display a useful empty state.
+
+Do not equate the absence of findings with a guarantee of code safety.
+
+6.5 First-use experience
+
+The first-use state must be deliberately designed.
+
+Do not show empty charts, meaningless zeros everywhere, fake reviews, or fabricated repositories.
+
+Explain the immediate next step.
+
+Offer a primary action to submit source code for review.
+
+Optionally include a small demonstration example.
+
+Keep demonstration data isolated from actual review history.
+
+The empty state should look like an intentional part of the product.
+
+⸻
+
+07. NEW REVIEW: AN ENGINEERING WORKFLOW
+
+Create a dedicated New Review experience.
+
+The user should be able to begin reviewing code without navigating through unnecessary setup screens.
+
+Support:
+
+* Source code input.
+* Filename.
+* Programming language.
+* Review objective.
+* Selected analysis focus.
+* Review submission.
+
+Support a sensible initial set of languages, including TypeScript, JavaScript, Python, Java, and SQL.
+
+Do not claim that language-specific static analysis is available unless the appropriate tools are integrated.
+
+Provide a clean input experience.
+
+If a code editor is available, use it.
+
+If not, provide a carefully designed code-input surface.
+
+Support loading a clearly labelled example snippet.
+
+Never overwrite existing source code unexpectedly.
+
+7.1 Review objectives
+
+Allow users to describe what they want investigated.
+
+Examples include:
+
+* Investigate authorization checks.
+* Look for incorrect boundary conditions.
+* Examine error handling.
+* Identify potentially unsafe input handling.
+* Investigate performance concerns.
+
+The objective should influence the real analysis request.
+
+Do not use decorative toggles that have no effect.
+
+7.2 Review execution
+
+When the user submits code:
+
+1. Validate the input.
+2. Disable duplicate submission.
+3. Send the request to the backend.
+4. Display the actual execution state.
+5. Handle the returned response.
+6. Validate the response before rendering.
+7. Populate the findings workspace.
+8. Persist the completed review according to the configured storage model.
+
+Preserve the source if a request fails.
+
+Display a useful error message.
+
+Do not expose internal stack traces or secrets.
+
+Provide a retry action where appropriate.
+
+Do not pretend that a request is still running if the server has already returned an error.
+
+Do not animate fake analysis stages to make a simple request appear more sophisticated.
+
+⸻
+
+08. REVIEW HISTORY AS A TECHNICAL RECORD
+
+Create a dedicated Review History page.
+
+It should feel like a professional engineering record, not a generic list of recent activity.
+
+Use a structured table or compact list with:
+
+* Review identifier.
+* Filename or source.
+* Programming language.
+* Completion status.
+* Findings count.
+* Highest reported severity.
+* Date and time.
+* Duration when available.
+
+Provide:
+
+* Search.
+* Sorting.
+* Useful filters.
+* Pagination or appropriate list scaling.
+* Review navigation.
+* Deletion with confirmation.
+
+Ensure the empty state is polished.
+
+Make long filenames and identifiers manageable.
+
+Provide accessible ways to inspect truncated values.
+
+Distinguish failed reviews from successful reviews.
+
+The first implementation may use browser-local storage if necessary.
+
+The interface must communicate the storage limitation honestly.
+
+Do not claim cross-device synchronization without a real shared persistence layer.
+
+Architect the persistence layer so it can later be replaced with a database-backed implementation.
+
+⸻
+
+09. EVALUATION LAB: THE MOST IMPORTANT ADVANCED SCREEN
+
+Design a dedicated Evaluation Lab for testing the reliability of PatchGuard AI.
+
+This screen is important because the product should demonstrate engineering discipline rather than relying on attractive AI-generated findings.
+
+Do not present benchmark results until actual evaluation runs have produced them.
+
+The Evaluation Lab should eventually support:
+
+* Curated test cases.
+* Expected findings.
+* Actual findings.
+* Precision.
+* Recall.
+* False-positive analysis.
+* Detection by severity.
+* Detection by category.
+* Review latency.
+* Model and configuration comparisons.
+
+For the initial implementation, create the actual interface and data contracts needed to support evaluation.
+
+Implement only the evaluation functionality that can be backed by real data.
+
+If the evaluation engine has not yet been implemented, show a clearly labelled empty state explaining how evaluation will work.
+
+Do not display fabricated benchmark charts.
+
+9.1 Evaluation layout
+
+Use a different visual composition from the main dashboard.
+
+Consider:
+
+* A test-suite navigation panel.
+* A central results table.
+* A selected test-case detail panel.
+* A compact metric summary when actual measurements exist.
+
+The screen should communicate that this is a testing and validation environment.
+
+9.2 Test-case details
+
+A test case should eventually be able to show:
+
+* Test identifier.
+* Language.
+* Bug category.
+* Expected result.
+* Actual result.
+* Whether the result matched expectations.
+* Relevant source code.
+* Detected findings.
+* Execution metadata.
+
+The UI should distinguish a genuine measured result from an unexecuted test case.
+
+Do not mark tests as passed without executing them.
+
+9.3 Metric definitions
+
+Document the meaning of each evaluation metric.
+
+Use appropriate definitions:
+
+Precision = True Positives / (True Positives + False Positives)
+
+Recall = True Positives / (True Positives + False Negatives)
+
+Define how findings are matched to expected defects before calculating these values.
+
+Do not calculate evaluation metrics using arbitrary counts.
+
+Handle zero denominators explicitly.
+
+Do not claim that performance on a small curated dataset proves general reliability.
+
+⸻
+
+10. SYSTEM OBSERVABILITY AND DIAGNOSTICS
+
+A backend engineer should not have to guess why the interface is failing.
+
+Introduce a carefully designed diagnostics experience.
+
+This must not become an uncontrolled log viewer.
+
+The goal is to expose useful operational context without overwhelming the primary workflow.
+
+Provide a compact system-status area showing only states that can actually be verified.
+
+Possible states include:
+
+* Backend reachable.
+* AI provider configured.
+* Latest request succeeded or failed.
+* Static-analysis availability.
+* Persistence mode.
+
+Do not report an AI provider as healthy merely because an API key exists.
+
+Distinguish configuration checks from actual connectivity checks.
+
+If a health endpoint exists, use it.
+
+If an operation has not been tested, show an unknown or unverified state.
+
+10.1 Diagnostics details
+
+Where supported, expose:
+
+* Request identifier.
+* Review identifier.
+* Request duration.
+* Analysis stage.
+* Error category.
+* Retry availability.
+* Relevant timestamp.
+
+Do not expose API keys, internal credentials, or sensitive source code through diagnostic metadata.
+
+Do not expose raw stack traces to ordinary users.
+
+A developer diagnostics view may show appropriately sanitised technical details.
+
+10.2 Failure states
+
+Design polished failure experiences for:
+
+* Backend unavailable.
+* Invalid request.
+* Missing server configuration.
+* AI provider rate limit.
+* AI provider timeout.
+* Invalid model response.
+* Persistence failure.
+* Incomplete analysis.
+
+Every failure state should explain what happened at an appropriate level of detail and offer a reasonable next action.
+
+Avoid generic messages such as “Something went wrong” when the application knows the failure category.
+
+Do not claim that an error has been resolved until the relevant operation succeeds.
+
+⸻
+
+11. COMMAND PALETTE AND KEYBOARD-FIRST INTERACTION
+
+Implement a professional command palette if the framework and available dependencies support it reliably.
+
+Use a keyboard shortcut such as Cmd/Ctrl + K.
+
+The palette should support navigation and relevant actions, such as:
+
+* Open Overview.
+* Start a new review.
+* Open Review History.
+* Open Evaluation Lab.
+* Open Settings.
+* Switch theme.
+
+Contextual actions may be added when they have a clear implementation.
+
+Provide:
+
+* Keyboard navigation.
+* Search.
+* Visible selection.
+* Escape to close.
+* Accessible focus handling.
+
+Do not include commands that do nothing.
+
+Do not add shortcuts that conflict unnecessarily with standard editor behaviour.
+
+The command palette should be fast, restrained, and predictable.
+
+⸻
+
+12. MICROINTERACTIONS AND MOTION
+
+Use motion to clarify changes in state and spatial relationships.
+
+Appropriate examples:
+
+* Opening a finding detail panel.
+* Selecting a source file.
+* Navigating to a highlighted line.
+* Expanding evidence.
+* Switching themes.
+* Opening the command palette.
+* Showing a successful operation.
+* Transitioning between responsive navigation states.
+
+Use short, restrained transitions.
+
+Avoid constant movement.
+
+Avoid excessive spring animations.
+
+Avoid decorative particles and animated backgrounds.
+
+Avoid slowing down repeated actions with unnecessary transitions.
+
+Respect reduced-motion preferences.
+
+Do not make important information available only through hover or animation.
+
+The application should feel immediate and precise.
+
+⸻
+
+13. FRONTEND ARCHITECTURE
+
+Build the frontend as a maintainable application rather than a single large component.
+
+Separate:
+
+* Application shell.
+* Navigation.
+* Pages.
+* Review workspace.
+* Source viewer.
+* Finding list.
+* Finding details.
+* Review summary.
+* Review history.
+* Evaluation Lab.
+* Diagnostics.
+* Shared UI components.
+* API client.
+* Data models.
+* State management.
+* Persistence adapters.
+* Theme system.
+
+Use TypeScript if supported by the existing project.
+
+Define clear interfaces for:
+
+* Review requests.
+* Review responses.
+* Findings.
+* Source files.
+* Review history.
+* Evaluation cases.
+* Evaluation results.
+* System status.
+* API errors.
+
+Use a consistent approach to asynchronous data.
+
+Distinguish loading, success, failure, empty, and partially completed states.
+
+Avoid excessive global state.
+
+Use local component state where appropriate and a shared state solution only where the complexity warrants it.
+
+Avoid creating abstractions that add complexity without meaningful reuse.
+
+Do not scatter business logic across visual components.
+
+Keep formatting, validation, data transformations, and API interaction in appropriate modules.
+
+⸻
+
+14. DATA CONTRACTS AND BACKEND INTEGRATION
+
+Design the frontend around explicit API contracts.
+
+The initial review workflow should use a real backend request when backend capabilities are available.
+
+The backend should accept source code and review configuration, invoke the configured AI provider, validate the model response, and return a structured result.
+
+The frontend must not contain the Gemini API secret.
+
+Do not implement a fake response merely to make the interface appear functional.
+
+If the API is unavailable, show an accurate configuration or connectivity error.
+
+Create a central API client that handles:
+
+* Request construction.
+* Response parsing.
+* Error normalisation.
+* Request identifiers when available.
+* Timeouts where appropriate.
+* Consistent error handling.
+
+Do not duplicate request logic across pages.
+
+Define a structured finding model that can support future static-analysis results as well as AI findings.
+
+Each finding should be able to distinguish its source, such as:
+
+* AI analysis.
+* Static analysis.
+* Other validated analysis sources.
+
+Do not fabricate a static-analysis result merely because the data model supports it.
+
+Do not claim that a source is independently corroborated unless an actual analysis tool has produced supporting evidence.
+
+Keep the interface compatible with future GitHub pull-request integration.
+
+However, do not create fake repository connections or pretend that GitHub is connected.
+
+⸻
+
+15. ACCESSIBILITY AND INTERACTION QUALITY
+
+Treat accessibility as an engineering requirement.
+
+Implement:
+
+* Semantic HTML.
+* Logical heading hierarchy.
+* Keyboard navigation.
+* Visible focus indicators.
+* Accessible dialogs.
+* Appropriate labels.
+* Accessible status announcements.
+* Sufficient colour contrast.
+* Non-colour indicators for severity.
+* Reduced-motion support.
+* Correct focus management when panels open and close.
+
+Ensure that all important interactions can be performed without a mouse.
+
+Ensure that code findings remain readable when browser zoom is increased.
+
+Do not make icon-only buttons without accessible names.
+
+Do not remove outlines without providing a meaningful replacement.
+
+Test the primary workflows using keyboard navigation.
+
+⸻
+
+16. RESPONSIVE AND PERFORMANCE ENGINEERING
+
+Optimise for professional desktop use without neglecting smaller screens.
+
+Support:
+
+* Large desktop.
+* Standard laptop.
+* Tablet.
+* Mobile.
+
+Use responsive layouts rather than simply shrinking desktop components.
+
+The main workspace should reorganise appropriately on narrow screens.
+
+Prevent horizontal overflow at the page level.
+
+Allow source code to scroll horizontally within its own region when necessary.
+
+Avoid unnecessarily expensive re-rendering of large source files.
+
+Use memoisation, virtualisation, or other optimisation techniques only when appropriate.
+
+Avoid importing large dependencies solely for decorative effects.
+
+Do not load unnecessary animation libraries.
+
+Keep the application responsive during long-running analysis requests.
+
+Display accurate loading states.
+
+Do not block the entire interface when only one panel needs to update.
+
+⸻
+
+17. DESIGN SYSTEM AND COMPONENT QUALITY
+
+Establish reusable components for:
+
+* Buttons.
+* Inputs.
+* Selectors.
+* Navigation.
+* Panels.
+* Tables.
+* Dialogs.
+* Notifications.
+* Severity labels.
+* Finding rows.
+* Source viewers.
+* Empty states.
+* Loading states.
+* Error states.
+* Status indicators.
+* Filter controls.
+
+Use a consistent design-token system.
+
+Avoid duplicating the same visual pattern with slightly different styles across different pages.
+
+However, do not force every component into an identical visual template.
+
+The Evaluation Lab, review workspace, and settings page should each have a composition appropriate to their purpose while remaining part of the same product.
+
+Avoid inconsistent spacing, typography, border treatments, and button behaviour.
+
+⸻
+
+18. REQUIRED QUALITY OF THE FIRST IMPLEMENTATION
+
+The first implementation must include a genuinely polished, functional frontend.
+
+Build:
+
+1. Overview.
+2. New Review.
+3. Review Workspace.
+4. Review History.
+5. Evaluation Lab.
+6. Settings.
+7. Command Palette.
+8. Diagnostics or system-status area where supported.
+
+The primary review workflow must be real.
+
+The interface should not depend on fabricated data to appear complete.
+
+When no data exists, show sophisticated empty states.
+
+When data exists, render the actual data.
+
+When an operation fails, explain the failure.
+
+When a feature is unavailable, identify the limitation.
+
+Do not make the entire product look like a set of unfinished placeholders.
+
+If an advanced feature cannot be implemented in the first stage, design its interface only where doing so establishes a useful future contract, and clearly distinguish it from completed functionality.
+
+Prioritise a working, polished end-to-end workflow over a large number of disconnected screens.
+
+⸻
+
+19. TESTING AND VERIFICATION
+
+Verify both the visual implementation and the functional behaviour.
+
+Run the available:
+
+* Build.
+* Type checks.
+* Linting.
+* Unit tests.
+* Integration tests.
+
+Add tests for critical interactions, including:
+
+* Navigation.
+* Theme switching.
+* Command palette.
+* Source submission.
+* Request loading state.
+* API failure state.
+* Finding selection.
+* Source-line navigation.
+* Finding filtering.
+* Finding status updates.
+* Review-history persistence.
+* Review-history deletion.
+* Responsive navigation.
+
+Test the interface with:
+
+* No review data.
+* A completed review with multiple findings.
+* A review with no findings.
+* A failed review.
+* A finding without a valid source location.
+* Long filenames.
+* Long source lines.
+* A large number of findings.
+
+Use fixtures for deterministic UI tests, but clearly separate them from actual user data.
+
+Do not claim that tests have passed unless they were executed and passed.
+
+If a browser-preview environment is available, inspect the rendered application rather than relying solely on source-code review.
+
+Correct visible layout defects, broken navigation, overflowing panels, inaccessible controls, and inconsistent spacing before declaring completion.
+
+⸻
+
+20. FINAL IMPLEMENTATION DIRECTIVE
+
+I want you to make ambitious design decisions.
+
+Do not interpret “professional” as “plain”.
+
+Do not interpret “minimal” as “empty”.
+
+Do not interpret “developer-focused” as an excuse for poor visual design.
+
+Do not interpret “advanced” as permission to overload the interface.
+
+Build a product with a recognisable visual identity, an excellent primary workflow, technically meaningful information density, carefully designed interactions, and a coherent architecture.
+
+Make the code-review workspace the centrepiece.
+
+Make findings easy to investigate.
+
+Make evidence easy to inspect.
+
+Make failure states useful.
+
+Make the application feel responsive, precise, and trustworthy.
+
+Treat the frontend as an important part of the engineering product, not a disposable layer around an API.
+
+Inspect the project, implement the application, verify the results, and finish with a factual report covering:
+
+* The screens and interactions implemented.
+* The actual working review workflow.
+* The components and architecture created.
+* The tests executed and their results.
+* Any environment configuration still required.
+* Any incomplete features or limitations.
+* The next engineering stage recommended.
+
+Do not stop at a plan, screenshot, or design description.
+
+Implement the application in the available environment.

@@ -1,0 +1,6 @@
+{
+  "name": "PatchGuard AI",
+  "description": "An engineering workspace for investigating code changes, validating automated findings, and understanding the risks hidden inside a pull request.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

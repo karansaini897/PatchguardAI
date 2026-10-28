@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+@layer base {
+  :root,
+  html.dark {
+    --pg-bg-canvas: #0B0D10;
+    --pg-bg-workspace: #11141A;
+    --pg-bg-surface: #161A22;
+    --pg-bg-elevated: #1C212B;
+    --pg-bg-interactive: #212734;
+    --pg-bg-code: #0D1015;
+    --pg-bg-code-gutter: #10141B;
+    --pg-bg-code-active: rgba(200, 230, 54, 0.08);
+    --pg-bg-code-defect: rgba(239, 68, 68, 0.11);
+
+    --pg-border-subtle: #1E2430;
+    --pg-border-default: #283040;
+    --pg-border-strong: #384256;
+
+    --pg-text-primary: #ECEAE4;
+    --pg-text-secondary: #9BA3B4;
+    --pg-text-muted: #667085;
+    --pg-text-inverse: #0B0D10;
+
+    --pg-accent: #C8E636;
+    --pg-accent-hover: #D6F052;
+    --pg-accent-subtle: rgba(200, 230, 54, 0.12);
+    --pg-accent-text: #C8E636;
+
+    --pg-info: #60A5FA;
+    --pg-info-subtle: rgba(96, 165, 250, 0.12);
+    --pg-success: #22C55E;
+    --pg-success-subtle: rgba(34, 197, 94, 0.12);
+    --pg-warning: #F59E0B;
+    --pg-warning-subtle: rgba(245, 158, 11, 0.12);
+    --pg-danger: #EF4444;
+    --pg-danger-subtle: rgba(239, 68, 68, 0.14);
+    --pg-critical: #F43F5E;
+    --pg-critical-subtle: rgba(244, 63, 94, 0.16);
+  }
+
+  html.light {
+    --pg-bg-canvas: #F5F4F0;
+    --pg-bg-workspace: #ECEAE3;
+    --pg-bg-surface: #FFFFFF;
+    --pg-bg-elevated: #F9F8F5;
+    --pg-bg-interactive: #E5E2D9;
+    --pg-bg-code: #FAF9F6;
+    --pg-bg-code-gutter: #F1EFE9;
+    --pg-bg-code-active: rgba(77, 112, 0, 0.09);
+    --pg-bg-code-defect: rgba(220, 38, 38, 0.09);
+
+    --pg-border-subtle: #E2DFD7;
+    --pg-border-default: #D0CCC0;
+    --pg-border-strong: #A8A293;
+
+    --pg-text-primary: #14171F;
+    --pg-text-secondary: #475063;
+    --pg-text-muted: #6E778A;
+    --pg-text-inverse: #FFFFFF;
+
+    --pg-accent: #4D6B00;
+    --pg-accent-hover: #3B5300;
+    --pg-accent-subtle: rgba(77, 107, 0, 0.10);
+    --pg-accent-text: #3E5700;
+
+    --pg-info: #1D4ED8;
+    --pg-info-subtle: rgba(29, 78, 216, 0.08);
+    --pg-success: #15803D;
+    --pg-success-subtle: rgba(21, 128, 61, 0.09);
+    --pg-warning: #B45309;
+    --pg-warning-subtle: rgba(180, 83, 9, 0.10);
+    --pg-danger: #B91C1C;
+    --pg-danger-subtle: rgba(185, 28, 28, 0.10);
+    --pg-critical: #BE123C;
+    --pg-critical-subtle: rgba(190, 18, 60, 0.12);
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--pg-bg-canvas);
+    color: var(--pg-text-primary);
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom subtle scrollbars for technical panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--pg-bg-workspace);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pg-border-default);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pg-border-strong);
+}
