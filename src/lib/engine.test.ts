@@ -1142,14 +1142,14 @@ test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe param
   assert.equal(harmlessFindings.length, 0, 'Harmless utility file must generate 0 findings');
 });
 
-test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comments vs genuine logging/propagation) and resolveServerPort validation', () => {
-  // 15a. TypeScript file with both silent catch blocks (must flag) and genuine logging/rethrowing catch blocks with comments (must NOT flag)
+test('15. PG-ERR-004 error-handling rule accuracy (single-line pass, single-line ellipsis, multiline comments+pass, logging, rethrow, and explicit failure return) and resolveServerPort validation', () => {
+  // 15a. TypeScript file with silent catch blocks (must flag) and genuine logging, rethrowing, and explicit failure-return handlers (must NOT flag)
   const tsCatchFileContent = [
     'export async function processJobs(jobs: Array<() => Promise<void>>, logger: any) {', // L1
     '  // 1. Single-line empty catch (MUST FLAG L3-L3)',                                   // L2
     '  try { await jobs[0](); } catch (e) {}',                                             // L3
     '',                                                                                    // L4
-    '  // 2. Multiline catch with multiple comments & block comment (MUST FLAG L6-L10)',   // L5
+    '  // 2. Multiline catch with multiple comments & block comment (MUST FLAG L8-L11)',   // L5
     '  try {',                                                                             // L6
     '    await jobs[1]();',                                                                // L7
     '  } catch {',                                                                         // L8
@@ -1172,7 +1172,16 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
     '    // Propagate domain exception',                                                   // L25
     '    throw err;',                                                                      // L26
     '  }',                                                                                 // L27
-    '}',                                                                                   // L28
+    '',                                                                                    // L28
+    '  // 5. Catch returning an explicit failure result (MUST NOT FLAG)',                  // L29
+    '  try {',                                                                             // L30
+    '    await jobs[4]();',                                                                // L31
+    '  } catch (err) {',                                                                   // L32
+    '    // Return structured failure state to caller',                                    // L33
+    '    return { ok: false, error: err instanceof Error ? err.message : String(err) };',  // L34
+    '  }',                                                                                 // L35
+    '  return { ok: true };',                                                              // L36
+    '}',                                                                                   // L37
   ].join('\n');
 
   const tsCatchFile: SourceFileRecord = {
@@ -1180,7 +1189,7 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
     filename: 'src/workers/jobRunner.ts',
     language: 'typescript',
     changeStatus: 'modified',
-    lineCount: 28,
+    lineCount: 37,
     content: tsCatchFileContent,
   };
 
@@ -1192,30 +1201,65 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
     2,
     `Expected exactly 2 PG-ERR-004 findings in jobRunner.ts (L3 and L8-11), got ${tsFindings.length}`
   );
+  assert.equal(tsFindings[0].location.filename, 'src/workers/jobRunner.ts');
   assert.equal(tsFindings[0].location.startLine, 3);
   assert.equal(tsFindings[0].location.endLine, 3);
+  assert.equal(tsFindings[0].location.isValidLocation, true);
+  assert.equal(tsFindings[0].location.locationReason, 'verified');
+
+  assert.equal(tsFindings[1].location.filename, 'src/workers/jobRunner.ts');
   assert.equal(tsFindings[1].location.startLine, 8);
   assert.equal(tsFindings[1].location.endLine, 11);
+  assert.equal(tsFindings[1].location.isValidLocation, true);
+  assert.equal(tsFindings[1].location.locationReason, 'verified');
 
-  // 15b. Python file with single-line pass, multiline commented pass (must flag), and genuine logging/raising handlers (must NOT flag)
+  // 15b. Python file testing all 6 required cases:
+  //  - Case 1: Single-line pass (MUST FLAG L4-L4)
+  //  - Case 2: Single-line ellipsis (MUST FLAG L8-L8)
+  //  - Case 3: Multiline handler containing only comments and pass (MUST FLAG L12-L15)
+  //  - Case 4: Handler that logs an exception (MUST NOT FLAG)
+  //  - Case 5: Handler that rethrows an exception (MUST NOT FLAG)
+  //  - Case 6: Valid handler that returns an explicit failure result (MUST NOT FLAG)
+  //  - Case 7: Single-line handler calling a function starting with "pass_" (MUST NOT FLAG)
   const pyExceptContent = [
     'def sync_records(cursor, logger):',                               // L1
     '    try:',                                                        // L2
     '        cursor.Ping()',                                           // L3
-    '    except Exception: pass',                                      // L4 (MUST FLAG L4-L4)
+    '    except Exception: pass',                                      // L4 (MUST FLAG L4-L4: single-line pass)
     '',                                                                // L5
     '    try:',                                                        // L6
-    '        cursor.Sync()',                                           // L7
-    '    except (ValueError, RuntimeError) as err:',                   // L8 (MUST FLAG L8-L10)
-    '        # intentionally ignored during warmup',                   // L9
-    '        pass',                                                    // L10
-    '',                                                                // L11
-    '    try:',                                                        // L12
-    '        cursor.Commit()',                                         // L13
-    '    except Exception as err:',                                    // L14 (MUST NOT FLAG)
-    '        # log and re-raise',                                      // L15
-    '        logger.exception("Commit failed: %s", err)',              // L16
-    '        raise',                                                   // L17
+    '        cursor.CheckWarmup()',                                    // L7
+    '    except Exception: ...',                                       // L8 (MUST FLAG L8-L8: single-line ellipsis)
+    '',                                                                // L9
+    '    try:',                                                        // L10
+    '        cursor.Sync()',                                           // L11
+    '    except (ValueError, RuntimeError) as err:',                   // L12 (MUST FLAG L12-L15: multiline comments + pass)
+    '        # intentionally ignored during warmup',                   // L13
+    '        # second explanatory comment',                            // L14
+    '        pass',                                                    // L15
+    '',                                                                // L16
+    '    try:',                                                        // L17
+    '        cursor.Flush()',                                          // L18
+    '    except Exception as err:',                                    // L19 (MUST NOT FLAG: logs exception)
+    '        # log operational error',                                 // L20
+    '        logger.exception("Flush failed: %s", err)',               // L21
+    '',                                                                // L22
+    '    try:',                                                        // L23
+    '        cursor.Commit()',                                         // L24
+    '    except Exception as err:',                                    // L25 (MUST NOT FLAG: rethrows exception)
+    '        # re-raise exception to caller',                          // L26
+    '        raise err',                                               // L27
+    '',                                                                // L28
+    '    try:',                                                        // L29
+    '        cursor.Finalize()',                                       // L30
+    '    except Exception as err:',                                    // L31 (MUST NOT FLAG: returns explicit failure result)
+    '        # return explicit failure payload',                       // L32
+    '        return {"ok": False, "error": str(err)}',                 // L33
+    '',                                                                // L34
+    '    try:',                                                        // L35
+    '        cursor.Audit()',                                          // L36
+    '    except Exception: pass_to_telemetry()',                       // L37 (MUST NOT FLAG: function call starting with pass_)
+    '    return {"ok": True}',                                         // L38
   ].join('\n');
 
   const pyExceptFile: SourceFileRecord = {
@@ -1223,7 +1267,7 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
     filename: 'workers/sync_worker.py',
     language: 'python',
     changeStatus: 'modified',
-    lineCount: 17,
+    lineCount: 38,
     content: pyExceptContent,
   };
 
@@ -1232,13 +1276,30 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
   );
   assert.equal(
     pyFindings.length,
-    2,
-    `Expected exactly 2 PG-ERR-004 findings in sync_worker.py (L4 and L8-10), got ${pyFindings.length}`
+    3,
+    `Expected exactly 3 PG-ERR-004 findings in sync_worker.py (L4, L8, and L12-15), got ${pyFindings.length}`
   );
+
+  // Finding 1: Single-line pass on L4
+  assert.equal(pyFindings[0].location.filename, 'workers/sync_worker.py');
   assert.equal(pyFindings[0].location.startLine, 4);
   assert.equal(pyFindings[0].location.endLine, 4);
+  assert.equal(pyFindings[0].location.isValidLocation, true);
+  assert.equal(pyFindings[0].location.locationReason, 'verified');
+
+  // Finding 2: Single-line ellipsis on L8
+  assert.equal(pyFindings[1].location.filename, 'workers/sync_worker.py');
   assert.equal(pyFindings[1].location.startLine, 8);
-  assert.equal(pyFindings[1].location.endLine, 10);
+  assert.equal(pyFindings[1].location.endLine, 8);
+  assert.equal(pyFindings[1].location.isValidLocation, true);
+  assert.equal(pyFindings[1].location.locationReason, 'verified');
+
+  // Finding 3: Multiline comments + pass on L12-L15
+  assert.equal(pyFindings[2].location.filename, 'workers/sync_worker.py');
+  assert.equal(pyFindings[2].location.startLine, 12);
+  assert.equal(pyFindings[2].location.endLine, 15);
+  assert.equal(pyFindings[2].location.isValidLocation, true);
+  assert.equal(pyFindings[2].location.locationReason, 'verified');
 
   // 15c. Verify resolveServerPort respects valid PORT and falls back to 3000 when absent or invalid
   assert.equal(resolveServerPort(undefined), 3000);
@@ -1252,5 +1313,6 @@ test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comme
   assert.equal(resolveServerPort('3099'), 3099);
   assert.equal(resolveServerPort(' 8080 '), 8080);
 });
+
 
 

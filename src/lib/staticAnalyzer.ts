@@ -439,14 +439,18 @@ const STATIC_RULES: StaticRuleDefinition[] = [
           continue;
         }
 
-        // 2. Python single-line except ...: pass
-        if (/^\s*except(?:\s+[^:]+)?\s*:\s*(?:pass|\.\.\.)\b\s*(?:#.*)?$/.test(line)) {
+        // 2. Python single-line except ...: pass / ...
+        if (
+          /^\s*except(?:\s+[A-Za-z0-9_.,()\s]+)?\s*:\s*(?:pass\b|\.\.\.(?!\.))\s*(?:#.*)?$/.test(
+            line
+          )
+        ) {
           hits.push({
             startLine: i + 1,
             endLine: i + 1,
             matchedPattern: line.trim(),
             explanation:
-              'Exception handler catches runtime errors and discards them with a bare pass statement without logging or error propagation.',
+              'Exception handler catches runtime errors and discards them with a bare pass or ellipsis statement without logging or error propagation.',
             potentialImpact:
               'Errors inside the try block are silently ignored, allowing execution to continue with potentially incomplete state and making operational failures harder to diagnose.',
             suggestedRemediation:
@@ -456,7 +460,9 @@ const STATIC_RULES: StaticRuleDefinition[] = [
         }
 
         // 3. Python multiline except ...: block containing only comments and pass/...
-        const pyExceptMatch = line.match(/^(\s*)except(?:\s+[^:]+)?\s*:\s*(?:#.*)?$/);
+        const pyExceptMatch = line.match(
+          /^(\s*)except(?:\s+[A-Za-z0-9_.,()\s]+)?\s*:\s*(?:#.*)?$/
+        );
         if (pyExceptMatch) {
           const exceptIndent = pyExceptMatch[1].length;
           const bodyStatements: string[] = [];
