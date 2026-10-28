@@ -1312,7 +1312,47 @@ test('15. PG-ERR-004 error-handling rule accuracy (single-line pass, single-line
   assert.equal(resolveServerPort('3000.5'), 3000);
   assert.equal(resolveServerPort('3099'), 3099);
   assert.equal(resolveServerPort(' 8080 '), 8080);
+
+  // 15d. Verify PG-PERF-007 does not flag awaited db calls placed after a loop closes
+  const loopBoundaryFile: SourceFileRecord = {
+    id: 'perf-loop-1',
+    filename: 'src/db/safeLoopAfterQuery.ts',
+    language: 'typescript',
+    changeStatus: 'modified',
+    lineCount: 14,
+    content: [
+      'export async function runBatch(db: any, items: string[], logger: any) {',
+      '  for (let i = 0; i < items.length; i++) {',
+      '    console.log(items[i]);',
+      '  }',
+      '  try {',
+      '    await db.audit();',
+      '  } catch (err) {',
+      '    logger.error("Audit failed", err);',
+      '    return { ok: false, error: String(err) };',
+      '  }',
+      '  for (let j = 0; j < items.length; j++) {',
+      '    await db.query("SELECT 1 WHERE id = $1", [items[j]]);',
+      '  }',
+      '}',
+    ].join('\n'),
+  };
+
+  const perfFindings = runStaticAnalysisOnFiles([loopBoundaryFile]).filter(
+    (f) => f.staticCorroboration?.ruleId === 'PG-PERF-007'
+  );
+  assert.equal(
+    perfFindings.length,
+    1,
+    `Expected exactly 1 PG-PERF-007 finding (on L11-L13 only, not L2-L4), got ${perfFindings.length}`
+  );
+  assert.equal(perfFindings[0].location.filename, 'src/db/safeLoopAfterQuery.ts');
+  assert.equal(perfFindings[0].location.startLine, 11);
+  assert.equal(perfFindings[0].location.endLine, 13);
+  assert.equal(perfFindings[0].location.isValidLocation, true);
+  assert.equal(perfFindings[0].location.locationReason, 'verified');
 });
+
 
 
 

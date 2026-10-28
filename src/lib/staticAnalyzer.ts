@@ -586,30 +586,49 @@ const STATIC_RULES: StaticRuleDefinition[] = [
     matcher: (lines) => {
       const hits: ReturnType<StaticRuleDefinition['matcher']> = [];
       for (let i = 0; i < lines.length; i++) {
-        const isLoop = /^\s*(for\s*\(|for\s+[a-zA-Z0-9_]+\s+in\b|while\s*\()/.test(lines[i]);
-        if (isLoop) {
-          const maxLoopEnd = Math.min(lines.length, i + 6);
-          const loopSlice = lines.slice(i + 1, maxLoopEnd);
-          const loopBody = loopSlice.join('\n');
-          if (/\b(await\s+(db|client|repo|fetch|axios|prisma)|cursor\.execute)\b/.test(loopBody)) {
-            let endOffset = 1;
-            for (let k = 0; k < loopSlice.length; k++) {
-              endOffset = k + 2;
-              if (/^\s*\}/.test(loopSlice[k])) break;
-            }
-            hits.push({
-              startLine: i + 1,
-              endLine: Math.min(lines.length, i + endOffset),
-              matchedPattern: lines[i].trim(),
-              explanation:
-                'An asynchronous I/O or database query is awaited sequentially on each iteration of a collection loop.',
-              potentialImpact:
-                'Latency scales linearly with input cardinality (O(N) round-trips), risking connection pool exhaustion and request timeouts on large payloads.',
-              suggestedRemediation:
-                'Batch-fetch records before the loop using a single `WHERE id IN (...)` query or execute independent requests with bounded concurrency.',
-            });
-            i += endOffset - 1;
+        const line = lines[i];
+        const isPyLoop = /^(\s*)(?:for\s+[a-zA-Z0-9_,\s]+\s+in\b.*|while\b.*):\s*(?:#.*)?$/.test(
+          line
+        );
+        const isBraceLoop = /^\s*(?:for\s*\(|while\s*\()/.test(line);
+        if (!isPyLoop && !isBraceLoop) continue;
+
+        const maxLoopEnd = Math.min(lines.length - 1, i + 8);
+        const bodyLines: string[] = [];
+        let endLineIdx = i;
+
+        if (isPyLoop) {
+          const loopIndent = (line.match(/^(\s*)/)?.[1] ?? '').length;
+          for (let k = i + 1; k <= maxLoopEnd; k++) {
+            const rawLine = lines[k];
+            if (/^\s*(?:#.*)?$/.test(rawLine)) continue;
+            const indent = (rawLine.match(/^(\s*)/)?.[1] ?? '').length;
+            if (indent <= loopIndent) break;
+            bodyLines.push(rawLine);
+            endLineIdx = k;
           }
+        } else {
+          for (let k = i + 1; k <= maxLoopEnd; k++) {
+            bodyLines.push(lines[k]);
+            endLineIdx = k;
+            if (/^\s*\}/.test(lines[k])) break;
+          }
+        }
+
+        const loopBody = bodyLines.join('\n');
+        if (/\b(await\s+(db|client|repo|fetch|axios|prisma)|cursor\.execute)\b/.test(loopBody)) {
+          hits.push({
+            startLine: i + 1,
+            endLine: endLineIdx + 1,
+            matchedPattern: line.trim(),
+            explanation:
+              'An asynchronous I/O or database query is awaited sequentially on each iteration of a collection loop.',
+            potentialImpact:
+              'Latency scales linearly with input cardinality (O(N) round-trips), risking connection pool exhaustion and request timeouts on large payloads.',
+            suggestedRemediation:
+              'Batch-fetch records before the loop using a single `WHERE id IN (...)` query or execute independent requests with bounded concurrency.',
+          });
+          i = endLineIdx;
         }
       }
       return hits;
