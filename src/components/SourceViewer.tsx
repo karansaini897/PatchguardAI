@@ -1,71 +1,43 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import {
-  ReviewFinding,
-  SeverityLevel,
-  SourceFileRecord,
-} from '../types/patchguard';
-import {
-  compareSeverity,
-  resolveTargetSourceFile,
-  verifyFindingLocationIntegrity,
-} from '../lib/staticAnalyzer';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ReviewFinding, SourceFileRecord } from '../types/patchguard';
+import { compareSeverity } from '../lib/staticAnalyzer';
 import { SEVERITY_META, SeverityLabel } from './SeverityIndicator';
-import { AlertTriangle, FileCode, CheckCircle2 } from 'lucide-react';
+import { Check, Copy, CornerDownRight, WrapText } from 'lucide-react';
 
 interface SourceViewerProps {
-  files: SourceFileRecord[];
-  activeFileId: string;
-  onSelectFile: (fileId: string) => void;
-  findings: ReviewFinding[];
+  file: SourceFileRecord;
+  findingsForFile: ReviewFinding[];
   selectedFinding: ReviewFinding | null;
   onSelectFinding: (finding: ReviewFinding) => void;
 }
 
-function isFindingAssociatedWithFile(
-  finding: ReviewFinding,
-  file: SourceFileRecord,
-  allFiles: SourceFileRecord[]
-): boolean {
-  const resolved = resolveTargetSourceFile(
-    allFiles,
-    finding.location.fileId,
-    finding.location.filename
-  );
-  if (resolved) {
-    return resolved.id === file.id;
-  }
-  return false;
-}
-
 /**
- * Lightweight, deterministic syntax highlighter for TypeScript, JS, Python, Java, and SQL.
- * Avoids heavy external DOM mutation libraries and guarantees fast rendering even on large files.
+ * Deterministic lightweight token highlighter for TypeScript, JavaScript, Python, Java, and SQL.
+ * Preserves exact character positions and whitespace without external dependencies.
  */
-function renderHighlightedLine(line: string): React.ReactNode {
-  const trimmed = line.trim();
-  if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('--')) {
-    return <span className="text-[var(--pg-text-muted)] italic">{line}</span>;
+function renderHighlightedLine(lineText: string): React.ReactNode {
+  const trimmed = lineText.trimStart();
+  if (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('--') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('*')
+  ) {
+    return <span className="text-[var(--pg-text-muted)] italic">{lineText}</span>;
   }
 
-  // Split by strings, template literals, SQL/code keywords, and numbers
   const tokenRegex =
-    /(`[^`]*`|'[^']*'|"[^"]*"|\b(?:export|async|function|const|let|var|if|else|for|while|return|try|catch|throw|new|import|from|interface|type|class|public|private|final|void|int|def|pass|except|SELECT|FROM|WHERE|AND|OR|UPDATE|SET|DELETE|INSERT|INTO|VALUES|LIMIT|RETURNING|NOW|await|true|false|null|undefined)\b|\b\d+\b)/g;
+    /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b(?:import|from|export|async|await|function|const|let|var|return|if|else|for|while|try|catch|finally|throw|new|class|interface|type|public|private|protected|static|final|def|None|True|False|true|false|null|undefined|SELECT|FROM|WHERE|AND|OR|INSERT|INTO|VALUES|UPDATE|SET|DELETE|ORDER|BY|LIMIT|JOIN|LEFT|INNER|ON|GROUP|HAVING)\b|\b(?:Promise|Error|Record|Map|Set|Array|String|Number|Boolean|Object|Response|Request|ResultSet|PreparedStatement|Connection)\b|\b\d+(?:\.\d+)?\b)/g;
 
-  const parts = line.split(tokenRegex);
+  const parts = lineText.split(tokenRegex);
   return parts.map((part, idx) => {
     if (!part) return null;
     if (
-      (part.startsWith("'") && part.endsWith("'")) ||
       (part.startsWith('"') && part.endsWith('"')) ||
+      (part.startsWith("'") && part.endsWith("'")) ||
       (part.startsWith('`') && part.endsWith('`'))
     ) {
-      return (
-        <span key={idx} className="text-[var(--pg-warning)]">
-          {part}
-        </span>
-      );
-    }
-    if (/^\d+$/.test(part)) {
       return (
         <span key={idx} className="text-[var(--pg-accent-text)]">
           {part}
@@ -73,23 +45,30 @@ function renderHighlightedLine(line: string): React.ReactNode {
       );
     }
     if (
-      /^(SELECT|FROM|WHERE|AND|OR|UPDATE|SET|DELETE|INSERT|INTO|VALUES|LIMIT|RETURNING|NOW)$/.test(
+      /^(import|from|export|async|await|function|const|let|var|return|if|else|for|while|try|catch|finally|throw|new|class|interface|type|public|private|protected|static|final|def|SELECT|FROM|WHERE|AND|OR|INSERT|INTO|VALUES|UPDATE|SET|DELETE|ORDER|BY|LIMIT|JOIN|LEFT|INNER|ON|GROUP|HAVING)$/.test(
         part
       )
     ) {
       return (
-        <span key={idx} className="text-[var(--pg-info)] font-semibold">
+        <span key={idx} className="text-[var(--pg-info)] font-medium">
           {part}
         </span>
       );
     }
     if (
-      /^(export|async|function|const|let|var|if|else|for|while|return|try|catch|throw|new|import|from|interface|type|class|public|private|final|void|int|def|pass|except|await|true|false|null|undefined)$/.test(
+      /^(Promise|Error|Record|Map|Set|Array|String|Number|Boolean|Object|Response|Request|ResultSet|PreparedStatement|Connection)$/.test(
         part
       )
     ) {
       return (
-        <span key={idx} className="text-[var(--pg-info)]">
+        <span key={idx} className="text-[var(--pg-warning)]">
+          {part}
+        </span>
+      );
+    }
+    if (/^(None|True|False|true|false|null|undefined|\d+(?:\.\d+)?)$/.test(part)) {
+      return (
+        <span key={idx} className="text-[var(--pg-danger)]">
           {part}
         </span>
       );
@@ -99,285 +78,282 @@ function renderHighlightedLine(line: string): React.ReactNode {
 }
 
 export const SourceViewer: React.FC<SourceViewerProps> = ({
-  files,
-  activeFileId,
-  onSelectFile,
-  findings,
+  file,
+  findingsForFile,
   selectedFinding,
   onSelectFinding,
 }) => {
-  const activeFile = useMemo(
-    () => files.find((f) => f.id === activeFileId) || files[0],
-    [files, activeFileId]
-  );
+  const lineRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  const [wrapLines, setWrapLines] = useState<boolean>(false);
+  const [copiedSource, setCopiedSource] = useState<boolean>(false);
 
-  const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
-  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const lines = useMemo(() => file.content.split(/\r?\n/), [file.content]);
 
-  // Verify every finding's location integrity against the current files (fileId, filename, contentHash, line bounds)
-  const verifiedFindings = useMemo(
+  // Only map findings with verified source line numbers inside this exact file
+  const validFindings = useMemo(
     () =>
-      findings.map((f) => ({
-        ...f,
-        location: verifyFindingLocationIntegrity(f, files),
-      })),
-    [findings, files]
+      findingsForFile.filter(
+        (f) =>
+          f.location.isValidLocation &&
+          f.location.startLine >= 1 &&
+          f.location.endLine <= lines.length &&
+          f.location.startLine <= f.location.endLine
+      ),
+    [findingsForFile, lines.length]
   );
 
-  // Map valid findings per line for the active file
-  const lineFindingsMap = useMemo(() => {
+  // Map each 1-indexed line number to all valid findings that cover that line
+  const findingsByLine = useMemo(() => {
     const map = new Map<number, ReviewFinding[]>();
-    if (!activeFile) return map;
-
-    for (const f of verifiedFindings) {
-      if (!isFindingAssociatedWithFile(f, activeFile, files)) continue;
-      if (!f.location.isValidLocation) continue;
-      const lineNum = f.location.startLine;
-      const list = map.get(lineNum) || [];
-      list.push(f);
-      map.set(lineNum, list);
+    for (const f of validFindings) {
+      for (let ln = f.location.startLine; ln <= f.location.endLine; ln++) {
+        const existing = map.get(ln) || [];
+        existing.push(f);
+        existing.sort((a, b) => compareSeverity(a.severity, b.severity));
+        map.set(ln, existing);
+      }
     }
     return map;
-  }, [verifiedFindings, activeFile, files]);
+  }, [validFindings]);
 
-  // Invalid-location findings targeting this file (or targeting an unmatched file)
-  const invalidFindingsForFile = useMemo(() => {
-    if (!activeFile) return [];
-    return verifiedFindings.filter(
-      (f) =>
-        !f.location.isValidLocation &&
-        (isFindingAssociatedWithFile(f, activeFile, files) ||
-          f.location.locationReason === 'wrong_file')
-    );
-  }, [verifiedFindings, activeFile, files]);
+  const isSelectedFindingInThisFile = Boolean(
+    selectedFinding &&
+      selectedFinding.location.fileId === file.id &&
+      selectedFinding.location.isValidLocation &&
+      selectedFinding.location.startLine >= 1 &&
+      selectedFinding.location.endLine <= lines.length
+  );
 
-  const verifiedSelectedFinding = useMemo(() => {
-    if (!selectedFinding) return null;
-    return (
-      verifiedFindings.find((vf) => vf.id === selectedFinding.id) || {
-        ...selectedFinding,
-        location: verifyFindingLocationIntegrity(selectedFinding, files),
-      }
-    );
-  }, [selectedFinding, verifiedFindings, files]);
-
-  // Scroll to active finding line inside the code container without scrolling the window header
-  useEffect(() => {
-    if (
-      verifiedSelectedFinding &&
-      activeFile &&
-      isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) &&
-      verifiedSelectedFinding.location.isValidLocation &&
-      viewportRef.current
-    ) {
-      const targetEl = lineRefs.current[verifiedSelectedFinding.location.startLine];
-      const container = viewportRef.current;
-      if (targetEl) {
-        const targetTop = targetEl.offsetTop - container.offsetTop;
-        const desiredScroll = Math.max(0, targetTop - container.clientHeight / 3);
-        container.scrollTo({ top: desiredScroll, behavior: 'smooth' });
-      }
+  const scrollToActiveFinding = () => {
+    if (!isSelectedFindingInThisFile || !selectedFinding) return;
+    const targetRow = lineRefs.current[selectedFinding.location.startLine];
+    if (targetRow) {
+      targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [verifiedSelectedFinding, activeFile, files]);
+  };
 
-  if (!activeFile) {
-    return (
-      <div className="p-6 text-sm text-[var(--pg-text-muted)]">
-        No source file loaded in this workspace.
-      </div>
-    );
-  }
+  // Scroll selected finding into view when selection changes
+  useEffect(() => {
+    scrollToActiveFinding();
+  }, [selectedFinding, file.id, lines.length]);
 
-  const lines = useMemo(() => activeFile.content.split(/\r?\n/), [activeFile.content]);
+  const handleCopyFileSource = () => {
+    navigator.clipboard?.writeText(file.content).catch(() => {});
+    setCopiedSource(true);
+    setTimeout(() => setCopiedSource(false), 1800);
+  };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--pg-bg-code)] border-r border-[var(--pg-border-default)] select-text">
-      {/* Region Header & File Switcher */}
-      <div className="border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] px-3 py-2">
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <span className="font-mono text-[11px] font-semibold tracking-wider text-[var(--pg-text-secondary)]">
-            A · SOURCE & CHANGE CONTEXT
-          </span>
-          <span className="font-mono text-[11px] text-[var(--pg-text-muted)] tabular-nums">
-            {activeFile.language.toUpperCase()} · {lines.length} lines · {activeFile.changeStatus}
-          </span>
-        </div>
-
-        {/* Multi-file or single-file source navigation tabs */}
-        <div
-          className="flex items-center gap-1 overflow-x-auto py-0.5"
-          role="tablist"
-          aria-label="Reviewed source files"
-        >
-          {files.map((file) => {
-            const fileFindings = verifiedFindings.filter((f) =>
-              isFindingAssociatedWithFile(f, file, files)
-            );
-            const unreviewedCount = fileFindings.filter((f) => f.status === 'unreviewed').length;
-            const isSelected = file.id === activeFile.id;
-
-            return (
-              <button
-                key={file.id}
-                role="tab"
-                aria-selected={isSelected}
-                onClick={() => onSelectFile(file.id)}
-                className={`group flex items-center gap-2 px-2.5 py-1.5 text-xs font-mono transition-colors border whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--pg-accent)] ${
-                  isSelected
-                    ? 'bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] border-[var(--pg-border-strong)]'
-                    : 'bg-transparent text-[var(--pg-text-secondary)] border-transparent hover:bg-[var(--pg-bg-interactive)] hover:text-[var(--pg-text-primary)]'
-                }`}
-              >
-                <FileCode className="w-3.5 h-3.5 text-[var(--pg-info)] shrink-0" />
-                <span className="truncate max-w-[210px]" title={file.filename}>
-                  {file.filename}
-                </span>
-                <span className="text-[11px] text-[var(--pg-text-muted)] tabular-nums">
-                  · {fileFindings.length}
-                </span>
-                {fileFindings.length > 0 && unreviewedCount === 0 && (
-                  <CheckCircle2
-                    className="w-3 h-3 text-[var(--pg-success)] shrink-0"
-                    aria-label="All findings reviewed"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Out-of-bounds / Invalid Location Quarantine Notice */}
-      {verifiedSelectedFinding &&
-        !verifiedSelectedFinding.location.isValidLocation &&
-        (isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) ||
-          verifiedSelectedFinding.location.locationReason === 'wrong_file') && (
-          <div
-            role="alert"
-            className="px-3 py-2.5 bg-[var(--pg-warning-subtle)] border-b border-[var(--pg-border-default)] flex items-start gap-2.5 text-xs"
+    <div className="flex flex-col h-full bg-[var(--pg-bg-code)] text-[var(--pg-text-primary)] select-text">
+      {/* File Metadata & Source Toolbar */}
+      <div className="px-3 py-2 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className="text-[var(--pg-text-primary)] font-semibold truncate"
+            title={file.filename}
           >
-            <AlertTriangle className="w-4 h-4 text-[var(--pg-warning)] shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              <div className="font-semibold text-[var(--pg-text-primary)]">
-                Source Location Quarantined (
-                {verifiedSelectedFinding.location.locationReason === 'wrong_file'
-                  ? `Unmatched File: ${verifiedSelectedFinding.location.filename}`
-                  : verifiedSelectedFinding.location.locationReason === 'source_changed'
-                  ? 'Source Content Modified After Analysis'
-                  : verifiedSelectedFinding.location.locationReason === 'missing_line'
-                  ? 'Missing Line Reference'
-                  : `Line L${verifiedSelectedFinding.location.startLine} Out of Bounds`}
-                )
-              </div>
-              <p className="text-[var(--pg-text-secondary)] leading-relaxed">
-                {verifiedSelectedFinding.location.validationNote ||
-                  `The selected finding references line ${verifiedSelectedFinding.location.startLine}, which cannot be verified in ${activeFile.filename} (${lines.length} lines). Approximate highlighting is disabled.`}
-              </p>
-            </div>
-          </div>
-        )}
-
-      {/* Code Viewport */}
-      <div
-        ref={viewportRef}
-        className="flex-1 overflow-auto font-mono text-[12.5px] leading-[1.65]"
-        data-testid="source-code-viewer"
-      >
-        <div className="min-w-max py-2">
-          {lines.map((lineText, idx) => {
-            const lineNumber = idx + 1;
-            const attachedFindings = lineFindingsMap.get(lineNumber) || [];
-            const isSelectedRange =
-              verifiedSelectedFinding &&
-              isFindingAssociatedWithFile(verifiedSelectedFinding, activeFile, files) &&
-              verifiedSelectedFinding.location.isValidLocation &&
-              lineNumber >= verifiedSelectedFinding.location.startLine &&
-              lineNumber <= verifiedSelectedFinding.location.endLine;
-
-            // Highest severity on this line
-            let topSeverity: SeverityLevel | null = null;
-            for (const af of attachedFindings) {
-              if (!topSeverity || compareSeverity(af.severity, topSeverity) < 0) {
-                topSeverity = af.severity;
-              }
-            }
-
-            const rowBg = isSelectedRange
-              ? 'bg-[var(--pg-bg-code-defect)]'
-              : attachedFindings.length > 0
-              ? 'bg-[var(--pg-bg-code-active)]'
-              : 'hover:bg-[var(--pg-bg-workspace)]';
-
-            return (
-              <div
-                key={lineNumber}
-                ref={(el) => {
-                  lineRefs.current[lineNumber] = el;
-                }}
-                className={`flex items-stretch transition-colors ${rowBg}`}
-              >
-                {/* Gutter: Line Number + Finding Marker */}
-                <div className="w-20 shrink-0 flex items-center justify-between px-2.5 bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-subtle)] select-none text-[11px] text-[var(--pg-text-muted)] tabular-nums">
-                  <span>{lineNumber}</span>
-                  {attachedFindings.length > 0 && topSeverity && (
-                    <button
-                      type="button"
-                      onClick={() => onSelectFinding(attachedFindings[0])}
-                      aria-label={`Line ${lineNumber}: ${attachedFindings.length} finding(s), highest severity ${topSeverity}. Click to inspect: ${attachedFindings[0].title}`}
-                      title={`L${lineNumber} · ${attachedFindings.length} finding(s): ${attachedFindings
-                        .map((f) => f.title)
-                        .join(' | ')}`}
-                      className={`px-1 py-0.2 font-mono text-[10px] font-bold transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-[var(--pg-accent)] ${SEVERITY_META[topSeverity].colorClass}`}
-                    >
-                      {SEVERITY_META[topSeverity].glyph}
-                      {attachedFindings.length > 1 ? attachedFindings.length : ''}
-                    </button>
-                  )}
-                </div>
-
-                {/* Source Line Content + Inline Annotation Anchor */}
-                <div className="flex-1 px-4 whitespace-pre flex items-center justify-between gap-6">
-                  <span className="text-[var(--pg-text-primary)]">
-                    {lineText.length > 0 ? renderHighlightedLine(lineText) : ' '}
-                  </span>
-
-                  {attachedFindings.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => onSelectFinding(attachedFindings[0])}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-mono bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] hover:border-[var(--pg-border-strong)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--pg-accent)]"
-                    >
-                      <SeverityLabel severity={attachedFindings[0].severity} compact />
-                      <span className="truncate max-w-[220px]">{attachedFindings[0].title}</span>
-                      {attachedFindings.length > 1 && (
-                        <span className="text-[var(--pg-text-muted)]">
-                          (+{attachedFindings.length - 1})
-                        </span>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Footer Metadata & Quarantine Count */}
-      {invalidFindingsForFile.length > 0 && (
-        <div className="border-t border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] px-3 py-1.5 flex items-center justify-between text-[11px] font-mono text-[var(--pg-warning)]">
-          <span>
-            {invalidFindingsForFile.length} finding(s) for {activeFile.filename} have unverified line references outside L1–L{lines.length}
+            {file.filename}
           </span>
+          <span className="text-[var(--pg-text-muted)] shrink-0">
+            ({file.language.toUpperCase()} · {lines.length} lines)
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] text-[var(--pg-text-secondary)]">
+            {validFindings.length} verified finding{validFindings.length === 1 ? '' : 's'}
+          </span>
+
+          {isSelectedFindingInThisFile && selectedFinding && (
+            <button
+              type="button"
+              onClick={scrollToActiveFinding}
+              title={`Scroll to selected finding at L${selectedFinding.location.startLine}`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] border border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] hover:bg-[var(--pg-bg-interactive)] cursor-pointer tabular-nums"
+            >
+              <CornerDownRight className="w-3 h-3" />
+              <span>
+                L{selectedFinding.location.startLine}
+                {selectedFinding.location.endLine !== selectedFinding.location.startLine
+                  ? `–${selectedFinding.location.endLine}`
+                  : ''}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => onSelectFinding(invalidFindingsForFile[0])}
-            className="underline hover:text-[var(--pg-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--pg-accent)]"
+            onClick={() => setWrapLines((prev) => !prev)}
+            aria-pressed={wrapLines}
+            title="Toggle line wrapping in source viewer"
+            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] border transition-colors cursor-pointer ${
+              wrapLines
+                ? 'border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-text-primary)]'
+                : 'border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
+            }`}
           >
-            Inspect quarantined finding
+            <WrapText className="w-3 h-3" />
+            <span>{wrapLines ? 'Wrap: On' : 'Wrap: Off'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCopyFileSource}
+            title="Copy full source file to clipboard"
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+          >
+            {copiedSource ? (
+              <>
+                <Check className="w-3 h-3 text-[var(--pg-success)]" />
+                <span className="text-[var(--pg-success)]">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3" />
+                <span>Copy File</span>
+              </>
+            )}
           </button>
         </div>
-      )}
+      </div>
+
+      {/* Scrollable Code Surface */}
+      <div className="flex-1 overflow-auto font-mono text-[12.5px] leading-[1.65]">
+        <table className="w-full border-collapse">
+          <tbody>
+            {lines.map((lineText: string, index: number) => {
+              const lineNumber = index + 1;
+              const attachedFindings = findingsByLine.get(lineNumber) || [];
+              const primaryFinding = attachedFindings[0] || null;
+
+              const isSelectedRange = Boolean(
+                isSelectedFindingInThisFile &&
+                  selectedFinding &&
+                  lineNumber >= selectedFinding.location.startLine &&
+                  lineNumber <= selectedFinding.location.endLine
+              );
+
+              const isSelectedStartLine = Boolean(
+                isSelectedRange &&
+                  selectedFinding &&
+                  lineNumber === selectedFinding.location.startLine
+              );
+
+              // Distinguish selected finding range vs other finding lines vs normal lines
+              let rowBgClass = 'hover:bg-[var(--pg-bg-interactive)]';
+              if (isSelectedRange) {
+                rowBgClass = 'bg-[var(--pg-bg-code-defect)]';
+              } else if (primaryFinding) {
+                rowBgClass = 'bg-[var(--pg-bg-code-active)] hover:bg-[var(--pg-bg-interactive)]';
+              }
+
+              const primaryMeta = primaryFinding
+                ? SEVERITY_META[primaryFinding.severity] || SEVERITY_META.medium
+                : null;
+
+              return (
+                <React.Fragment key={lineNumber}>
+                  <tr
+                    ref={(el) => {
+                      lineRefs.current[lineNumber] = el;
+                    }}
+                    onClick={() => {
+                      if (primaryFinding) {
+                        onSelectFinding(primaryFinding);
+                      }
+                    }}
+                    className={`${rowBgClass} transition-colors ${
+                      primaryFinding ? 'cursor-pointer' : ''
+                    }`}
+                  >
+                    {/* Gutter: Active Marker + Severity Glyph + Tabular Line Number */}
+                    <td
+                      className={`w-24 px-2 py-0.5 select-none border-r text-right align-top tabular-nums shrink-0 ${
+                        isSelectedRange
+                          ? 'bg-[var(--pg-bg-elevated)] border-[var(--pg-border-strong)] text-[var(--pg-accent-text)] font-semibold'
+                          : primaryFinding
+                          ? 'bg-[var(--pg-bg-code-gutter)] border-[var(--pg-border-default)] text-[var(--pg-text-primary)]'
+                          : 'bg-[var(--pg-bg-code-gutter)] border-[var(--pg-border-subtle)] text-[var(--pg-text-muted)]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        {primaryFinding && primaryMeta ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectFinding(primaryFinding);
+                            }}
+                            title={`${primaryMeta.label.toUpperCase()}: ${primaryFinding.title}${
+                              attachedFindings.length > 1
+                                ? ` (+${attachedFindings.length - 1} more on L${lineNumber})`
+                                : ''
+                            }`}
+                            aria-label={`Inspect ${primaryFinding.severity} finding on line ${lineNumber}: ${primaryFinding.title}`}
+                            className={`inline-flex items-center gap-0.5 text-[11px] font-bold hover:opacity-80 focus:outline-none cursor-pointer ${primaryMeta.colorClass}`}
+                          >
+                            <span>{isSelectedRange ? '▶' : primaryMeta.glyph}</span>
+                            {attachedFindings.length > 1 && (
+                              <span className="text-[9px] text-[var(--pg-text-secondary)]">
+                                +{attachedFindings.length - 1}
+                              </span>
+                            )}
+                          </button>
+                        ) : (
+                          <span className="w-3 inline-block" aria-hidden="true">
+                            {isSelectedRange ? '▶' : ''}
+                          </span>
+                        )}
+                        <span>{lineNumber}</span>
+                      </div>
+                    </td>
+
+                    {/* Verbatim Code Line */}
+                    <td
+                      className={`px-4 py-0.5 font-mono text-[var(--pg-text-primary)] ${
+                        wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'
+                      }`}
+                    >
+                      {lineText.length > 0 ? renderHighlightedLine(lineText) : ' '}
+                    </td>
+                  </tr>
+
+                  {/* Inline Finding Callout Banner directly below the start line of the selected finding */}
+                  {isSelectedStartLine && selectedFinding && (
+                    <tr className="bg-[var(--pg-bg-elevated)] border-y border-[var(--pg-border-strong)]">
+                      <td className="px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-strong)] align-top uppercase">
+                        ACTIVE
+                      </td>
+                      <td className="px-4 py-2 font-sans text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <SeverityLabel severity={selectedFinding.severity} compact />
+                            <span className="font-semibold text-[var(--pg-text-primary)]">
+                              {selectedFinding.title}
+                            </span>
+                            {selectedFinding.staticCorroboration?.ruleId && (
+                              <span className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+                                [{selectedFinding.staticCorroboration.ruleId}]
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-mono text-[11px] text-[var(--pg-text-secondary)] tabular-nums">
+                            Verified L{selectedFinding.location.startLine}
+                            {selectedFinding.location.endLine !== selectedFinding.location.startLine
+                              ? `–L${selectedFinding.location.endLine}`
+                              : ''}{' '}
+                            · {selectedFinding.confidence.toUpperCase()} CONFIDENCE
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

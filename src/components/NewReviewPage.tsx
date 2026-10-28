@@ -543,16 +543,52 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
               className="w-full px-3 py-1.5 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
             >
               <option value="hybrid">
-                Hybrid (Static Analyzer + Gemini 3.8 Flash Corroboration)
+                Hybrid (Static Analyzer + Gemini 3.1 Flash Lite Corroboration)
               </option>
               <option value="static-only">
                 Deterministic Static Analyzer Only (pg-static-ast-1.4.2)
               </option>
               <option value="ai-only">
-                Gemini 3.8 Flash Semantic Reasoning Only
+                Gemini 3.1 Flash Lite Semantic Reasoning Only
               </option>
             </select>
           </div>
+
+          {/* Active Pipeline Execution Stage Breakdown */}
+          {isSubmitting && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-strong)] space-y-2 text-xs font-mono"
+            >
+              <div className="flex items-center gap-2 text-[var(--pg-accent-text)] font-semibold">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>EXECUTING REVIEW PIPELINE ({analysisMode.toUpperCase()})</span>
+              </div>
+              <div className="space-y-1 text-[11px] text-[var(--pg-text-secondary)]">
+                <div>
+                  1. Static AST/Pattern Engine:{' '}
+                  <strong className="text-[var(--pg-text-primary)]">
+                    {analysisMode === 'ai-only' ? 'SKIPPED' : 'RUNNING (pg-static-ast-1.4.2)'}
+                  </strong>
+                </div>
+                <div>
+                  2. Gemini Semantic Engine:{' '}
+                  <strong className="text-[var(--pg-text-primary)]">
+                    {analysisMode === 'static-only'
+                      ? 'SKIPPED'
+                      : 'RUNNING (gemini-3.1-flash-lite)'}
+                  </strong>
+                </div>
+                <div>
+                  3. Location Verifier & Corroboration:{' '}
+                  <strong className="text-[var(--pg-text-primary)]">
+                    AWAITING STAGE COMPLETION
+                  </strong>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Submit Action */}
           <button

@@ -256,9 +256,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 Corroborate static rules with Gemini semantic analysis
               </h3>
               <p className="text-[var(--pg-text-secondary)] leading-relaxed">
-                The backend executes deterministic AST/pattern analysis alongside Gemini 3.8 Flash,
-                upgrading overlapping detections to Corroborated status and quarantining out-of-bounds
-                line numbers.
+                The backend executes deterministic AST/pattern analysis alongside{' '}
+                <code className="font-mono text-[11px]">
+                  {health?.aiModelId || 'gemini-3.1-flash-lite'}
+                </code>
+                , upgrading overlapping detections to Corroborated status and quarantining
+                out-of-bounds line numbers.
               </p>
             </div>
 
