@@ -1052,6 +1052,7 @@ export async function executeReviewPipeline(
       status: 'skipped',
       durationMs: 0,
       findingsProduced: 0,
+      errorMessage: 'Skipped: Review executed in AI Reasoning Only mode.',
     });
   }
 
@@ -1074,7 +1075,7 @@ export async function executeReviewPipeline(
         stageId: 'stage-ai',
         name: 'Gemini Semantic Code Reasoning',
         engine: AI_MODEL_ID,
-        status: 'warning',
+        status: 'skipped',
         durationMs: 0,
         findingsProduced: 0,
         attempts: 0,
@@ -1082,7 +1083,7 @@ export async function executeReviewPipeline(
         retryable: false,
         errorCode: 'MISSING_SERVER_CONFIG',
         errorMessage:
-          'GEMINI_API_KEY is not configured on the server; semantic AI stage was skipped and review completed with deterministic static analysis.',
+          'Skipped: GEMINI_API_KEY is not configured on the server; semantic AI stage was skipped and review completed with deterministic static analysis.',
       });
       warnings.push(
         'Partially completed review: AI semantic stage skipped (GEMINI_API_KEY not configured on server). Showing verified findings from deterministic static analysis only.'
@@ -1195,6 +1196,7 @@ export async function executeReviewPipeline(
       status: 'skipped',
       durationMs: 0,
       findingsProduced: 0,
+      errorMessage: 'Skipped: Review executed in Static Analyzer Only mode.',
     });
   }
 

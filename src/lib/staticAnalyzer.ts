@@ -142,7 +142,7 @@ interface StaticRuleDefinition {
 const STATIC_RULES: StaticRuleDefinition[] = [
   {
     ruleId: 'PG-SEC-001',
-    title: 'Unsanitized SQL query interpolation allows arbitrary command injection',
+    title: 'Unsanitized SQL query interpolation enables SQL injection (CWE-89)',
     severity: 'critical',
     category: 'security',
     languages: ['typescript', 'javascript', 'python', 'java', 'sql'],
@@ -151,14 +151,25 @@ const STATIC_RULES: StaticRuleDefinition[] = [
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (/^\s*(\/\/|#|--)/.test(line)) continue;
-        const hasSqlKeyword = /\b(SELECT|UPDATE|DELETE|INSERT\s+INTO|WHERE)\b/i.test(line);
+        // Exclude logging and error construction statements that mention SQL verbs in prose
+        if (
+          /\b(console\.(log|warn|error|info|debug)|logger\.(log|warn|error|info|debug)|throw\s+new\s+\w*Error)\s*\(/.test(
+            line
+          )
+        ) {
+          continue;
+        }
+        const hasSqlClauseStructure =
+          /\bSELECT\b.+\bFROM\b|\bUPDATE\b.+\bSET\b|\bDELETE\s+FROM\b|\bINSERT\s+INTO\b|\bWHERE\b.+\b(=|IN|LIKE)\b/i.test(
+            line
+          );
         const hasInterpolation =
           /\$\{[^}]+\}/.test(line) ||
           /f["'][^"']*\{[^}]+\}/.test(line) ||
           /["']\s*\+\s*[a-zA-Z0-9_.]+\s*(\+|;|$)/.test(line) ||
           (/%s/.test(line) && /\.execute\s*\(\s*f["']/.test(line));
 
-        if (hasSqlKeyword && hasInterpolation) {
+        if (hasSqlClauseStructure && hasInterpolation) {
           // Include the immediately following execution line only if it exists and executes this query variable
           const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
           const spansNextLine =
@@ -169,11 +180,11 @@ const STATIC_RULES: StaticRuleDefinition[] = [
             endLine: spansNextLine ? i + 2 : i + 1,
             matchedPattern: line.trim(),
             explanation:
-              'Query string is constructed dynamically by interpolating or concatenating runtime variables directly into SQL syntax rather than binding parameters.',
+              'SQL statement string is constructed dynamically by interpolating or concatenating runtime variables directly into SQL query syntax rather than using bound parameters.',
             potentialImpact:
-              'An attacker controlling the interpolated input can break out of the intended predicate, bypass authentication/authorization filters, or read/modify arbitrary tables.',
+              'SQL Injection (CWE-89): an attacker controlling the interpolated input can alter SQL predicate logic, bypass tenant/authentication filters, or read and modify arbitrary database records.',
             suggestedRemediation:
-              'Replace string interpolation with parameterized placeholders ($1, ?, or :param) passed separately to the database driver.',
+              'Replace string interpolation with parameterized query placeholders ($1, ?, or :param) passed separately to the database driver.',
             remediationCode:
               '// Bind parameters separately from the SQL statement:\nawait db.query("SELECT * FROM accounts WHERE tenant_id = $1 AND status = $2", [tenantId, status]);',
           });
@@ -328,22 +339,28 @@ const STATIC_RULES: StaticRuleDefinition[] = [
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (/^\s*(\/\/|#|--)/.test(line)) continue;
-        if (
-          /(api[_-]?key|[a-z0-9_]*secret(?:[_-]?key)?|password|private[_-]?key|bearer[_-]?token)\s*[:=]\s*["'][A-Za-z0-9_\-+/=]{12,}["']/i.test(
-            line
-          )
-        ) {
-          hits.push({
-            startLine: i + 1,
-            endLine: i + 1,
-            matchedPattern: line.trim(),
-            explanation:
-              'A credential or cryptographic secret is assigned as a string literal directly in source control.',
-            potentialImpact:
-              'Anyone with read access to the repository or build artifacts can extract the secret and impersonate the service or forge tokens.',
-            suggestedRemediation:
-              'Load secrets exclusively from validated environment variables or a secret manager at startup, and rotate the exposed credential immediately.',
-          });
+        const secretMatch = line.match(
+          /(api[_-]?key|[a-z0-9_]*secret(?:[_-]?key)?|password|private[_-]?key|bearer[_-]?token)\s*[:=]\s*["']([A-Za-z0-9_\-+/=]{12,})["']/i
+        );
+        if (secretMatch) {
+          const literalValue = secretMatch[2];
+          const isPlaceholder =
+            /^(YOUR_|MY_|CHANGE_ME|REPLACE_ME|EXAMPLE_|TEST_|DUMMY_|PLACEHOLDER|REDACTED)/i.test(
+              literalValue
+            );
+          if (!isPlaceholder) {
+            hits.push({
+              startLine: i + 1,
+              endLine: i + 1,
+              matchedPattern: line.trim(),
+              explanation:
+                'A credential or cryptographic secret is assigned as a string literal directly in source control.',
+              potentialImpact:
+                'Anyone with read access to the repository or build artifacts can extract the secret and impersonate the service or forge tokens.',
+              suggestedRemediation:
+                'Load secrets exclusively from validated environment variables or a secret manager at startup, and rotate the exposed credential immediately.',
+            });
+          }
         }
       }
       return hits;

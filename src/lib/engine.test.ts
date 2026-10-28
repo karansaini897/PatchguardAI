@@ -22,7 +22,7 @@ import {
   parseAndValidateAiFindings,
   parseRetryAfterMs,
 } from './reviewOrchestrator';
-import { ISOLATED_DEMO_REVIEW } from './curatedData';
+import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData';
 import { ReviewFinding, SourceFileRecord } from '../types/patchguard';
 
 const sampleVulnFile: SourceFileRecord = {
@@ -564,3 +564,142 @@ test('9. Correct behavior when all analysis engines fail (returns structured err
   });
   assert.ok(filtered.length >= 2);
 });
+
+test('10. Static analysis rules accuracy, SQL injection CWE-89 classification, and negative control verification', async () => {
+  // 10a. Verify PG-SEC-001 accurately classifies SQL Injection (CWE-89) and never conflates with command injection
+  const demoFindings = ISOLATED_DEMO_REVIEW.findings;
+  assert.equal(demoFindings.length, 8, 'PR #418 demo must produce exactly 8 verified static findings across 2 files');
+
+  const sqlFindings = demoFindings.filter((f) => f.staticCorroboration?.ruleId === 'PG-SEC-001');
+  assert.equal(sqlFindings.length, 2, 'PR #418 must trigger PG-SEC-001 on L12-13 and L22 of payoutController.ts');
+  for (const sf of sqlFindings) {
+    assert.equal(
+      sf.title,
+      'Unsanitized SQL query interpolation enables SQL injection (CWE-89)',
+      'PG-SEC-001 title must accurately name SQL injection (CWE-89)'
+    );
+    assert.ok(
+      !sf.title.toLowerCase().includes('command injection'),
+      'PG-SEC-001 must not misclassify SQL injection as command injection'
+    );
+    assert.ok(sf.potentialImpact.includes('CWE-89'));
+    assert.equal(sf.severity, 'critical');
+    assert.equal(sf.confidence, 'high');
+  }
+
+  // 10b. Verify PG-SEC-001 negative cases: prose log strings and error messages with SQL words must NOT trigger false positives
+  const negativeLogAndPlaceholderFile: SourceFileRecord = {
+    id: 'file-neg-log',
+    filename: 'src/services/auditLogger.ts',
+    language: 'typescript',
+    changeStatus: 'modified',
+    lineCount: 8,
+    content: [
+      'export function logAccountUpdate(accountId: string, tenantId: string) {',
+      '  const placeholderKey = "YOUR_API_KEY_HERE";',
+      '  console.error(`Failed to UPDATE account ${accountId} or DELETE FROM cache for ${tenantId}`);',
+      '  throw new Error(`Cannot SELECT record FROM ledger where id = ${accountId}`);',
+      '}',
+    ].join('\n'),
+    contentHash: computeSourceContentHash(
+      [
+        'export function logAccountUpdate(accountId: string, tenantId: string) {',
+        '  const placeholderKey = "YOUR_API_KEY_HERE";',
+        '  console.error(`Failed to UPDATE account ${accountId} or DELETE FROM cache for ${tenantId}`);',
+        '  throw new Error(`Cannot SELECT record FROM ledger where id = ${accountId}`);',
+        '}',
+      ].join('\n')
+    ),
+  };
+
+  const negFindings = runStaticAnalysisOnFiles([negativeLogAndPlaceholderFile]);
+  assert.equal(
+    negFindings.length,
+    0,
+    'Log statements, Error constructors, and placeholder keys must produce 0 false positives'
+  );
+
+  // 10c. Verify all 5 curated evaluation suite test cases (positive defect suites eval-tc-01..04 and clean control eval-tc-05)
+  for (const tc of INITIAL_EVALUATION_TEST_CASES) {
+    const fileRecord: SourceFileRecord = {
+      id: `tc-${tc.id}`,
+      filename: tc.filename,
+      language: tc.language,
+      changeStatus: 'modified',
+      content: tc.sourceCode,
+      lineCount: tc.sourceCode.split('\n').length,
+      contentHash: computeSourceContentHash(tc.sourceCode),
+    };
+    const findings = runStaticAnalysisOnFiles([fileRecord]);
+    const matchRes = matchFindingsToExpectedDefects(findings, tc.expectedDefects);
+
+    if (tc.expectedDefects.length === 0) {
+      // Negative control (eval-tc-05: Parameterized Query & Transactional Payout)
+      assert.equal(
+        findings.length,
+        0,
+        `Negative control ${tc.id} (${tc.title}) must produce 0 false positives`
+      );
+    } else {
+      assert.equal(
+        matchRes.falseNegatives,
+        0,
+        `Positive benchmark ${tc.id} (${tc.title}) must detect all expected ground-truth defects`
+      );
+    }
+  }
+
+  // 10d. Verify explicit stage status distinction: static-only ('skipped') vs hybrid missing key ('skipped' + 'completed_with_warnings')
+  const staticOnlyRes = await executeReviewPipeline(
+    {
+      title: 'Static Only Mode Verification',
+      objective: 'Verify static-only mode marks AI stage as skipped',
+      focusAreas: ['security'],
+      files: [
+        {
+          id: sampleVulnFile.id,
+          filename: sampleVulnFile.filename,
+          language: sampleVulnFile.language,
+          content: sampleVulnFile.content,
+        },
+      ],
+      analysisMode: 'static-only',
+    },
+    { requestId: 'req-static-only', invokeAiModel: null }
+  );
+  assert.equal(staticOnlyRes.ok, true);
+  if (staticOnlyRes.ok) {
+    assert.equal(staticOnlyRes.review.status, 'completed_static_only');
+    const stgStatic = staticOnlyRes.review.stages.find((s) => s.stageId === 'stage-static')!;
+    const stgAi = staticOnlyRes.review.stages.find((s) => s.stageId === 'stage-ai')!;
+    assert.equal(stgStatic.status, 'succeeded');
+    assert.equal(stgAi.status, 'skipped');
+    assert.ok(stgAi.errorMessage?.includes('Static Analyzer Only'));
+  }
+
+  const hybridMissingKeyRes = await executeReviewPipeline(
+    {
+      title: 'Hybrid Missing Key Verification',
+      objective: 'Verify hybrid mode with missing server key marks AI stage as skipped and review as completed_with_warnings',
+      focusAreas: ['security'],
+      files: [
+        {
+          id: sampleVulnFile.id,
+          filename: sampleVulnFile.filename,
+          language: sampleVulnFile.language,
+          content: sampleVulnFile.content,
+        },
+      ],
+      analysisMode: 'hybrid',
+    },
+    { requestId: 'req-hybrid-no-key', invokeAiModel: null }
+  );
+  assert.equal(hybridMissingKeyRes.ok, true);
+  if (hybridMissingKeyRes.ok) {
+    assert.equal(hybridMissingKeyRes.review.status, 'completed_with_warnings');
+    const stgAi = hybridMissingKeyRes.review.stages.find((s) => s.stageId === 'stage-ai')!;
+    assert.equal(stgAi.status, 'skipped');
+    assert.equal(stgAi.errorCode, 'MISSING_SERVER_CONFIG');
+  }
+});
+

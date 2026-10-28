@@ -236,6 +236,8 @@ export const ISOLATED_DEMO_REVIEW: ReviewRecord = {
       status: 'skipped',
       durationMs: 0,
       findingsProduced: 0,
+      errorMessage:
+        'Skipped: Isolated demonstration record is pre-computed using deterministic static analysis only. Run a live review in Hybrid mode to invoke Gemini AI.',
     },
   ],
   findings: DEMO_PR_418_FINDINGS,
