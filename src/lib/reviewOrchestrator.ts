@@ -1,4 +1,4 @@
-import {
+import type {
   AnalysisStageReport,
   ApiErrorCategory,
   FindingCategory,
@@ -10,7 +10,7 @@ import {
   SeverityLevel,
   SourceFileRecord,
   StructuredApiError,
-} from '../types/patchguard';
+} from '../types/patchguard.ts';
 import {
   computeSourceContentHash,
   createQuarantinedFindingLocation,
@@ -19,7 +19,7 @@ import {
   runStaticAnalysisOnFiles,
   STATIC_ANALYZER_VERSION,
   validateAndNormalizeFindingLocation,
-} from './staticAnalyzer';
+} from './staticAnalyzer.ts';
 
 export const AI_MODEL_ID = 'gemini-3.1-flash-lite';
 

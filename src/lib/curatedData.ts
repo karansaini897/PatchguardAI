@@ -1,15 +1,15 @@
-import {
+import type {
   EvaluationTestCase,
   FindingCategory,
   ReviewRecord,
   SourceFileRecord,
   SupportedLanguage,
-} from '../types/patchguard';
+} from '../types/patchguard.ts';
 import {
   computeSourceContentHash,
   runStaticAnalysisOnFiles,
   STATIC_ANALYZER_VERSION,
-} from './staticAnalyzer';
+} from './staticAnalyzer.ts';
 
 export interface CodeExampleSnippet {
   id: string;

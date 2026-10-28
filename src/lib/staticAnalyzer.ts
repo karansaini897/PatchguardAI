@@ -1,11 +1,11 @@
-import {
+import type {
   FindingCategory,
   FindingLocation,
   LocationValidationReason,
   ReviewFinding,
   SeverityLevel,
   SourceFileRecord,
-} from '../types/patchguard';
+} from '../types/patchguard.ts';
 
 export const STATIC_ANALYZER_VERSION = 'pg-static-ast-1.4.2';
 
@@ -318,6 +318,7 @@ const STATIC_RULES: StaticRuleDefinition[] = [
       const hits: ReturnType<StaticRuleDefinition['matcher']> = [];
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        if (!/\b(catch|except)\b/.test(line)) continue;
         const maxEnd = Math.min(lines.length, i + 4);
         const windowSlice = lines.slice(i, maxEnd);
         const joinedWindow = windowSlice.join(' ');
@@ -327,9 +328,11 @@ const STATIC_RULES: StaticRuleDefinition[] = [
 
         if (isSilentCatch) {
           let blockLen = 1;
-          for (let k = 1; k < windowSlice.length; k++) {
-            blockLen = k + 1;
-            if (/^\s*(\}|pass\b)/.test(windowSlice[k])) break;
+          if (!/catch\s*\([^)]*\)\s*\{\s*(\/\/.*)?\s*\}/.test(line)) {
+            for (let k = 1; k < windowSlice.length; k++) {
+              blockLen = k + 1;
+              if (/^\s*(\}\s*$|pass\b)/.test(windowSlice[k])) break;
+            }
           }
           hits.push({
             startLine: i + 1,

@@ -1,4 +1,4 @@
-import {
+import type {
   AnalysisSourceType,
   ExpectedDefect,
   FindingCategory,
@@ -6,8 +6,8 @@ import {
   MatchedDefectPair,
   ReviewFinding,
   SeverityLevel,
-} from '../types/patchguard';
-import { compareSeverity } from './staticAnalyzer';
+} from '../types/patchguard.ts';
+import { compareSeverity } from './staticAnalyzer.ts';
 
 export interface FindingFilterCriteria {
   severity: SeverityLevel | 'all';

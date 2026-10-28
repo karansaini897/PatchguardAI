@@ -3,18 +3,18 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
-import { ReviewRequestPayload } from './src/types/patchguard';
-import { STATIC_ANALYZER_VERSION } from './src/lib/staticAnalyzer';
+import type { ReviewRequestPayload } from './src/types/patchguard.ts';
+import { STATIC_ANALYZER_VERSION } from './src/lib/staticAnalyzer.ts';
 import {
   AI_MODEL_ID,
   callAiWithRetry,
   executeReviewPipeline,
   isConfiguredGeminiApiKey,
-} from './src/lib/reviewOrchestrator';
+} from './src/lib/reviewOrchestrator.ts';
 
 dotenv.config({ quiet: true });
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 let lastAiConnectivityState: 'unverified' | 'verified' | 'failed' = 'unverified';
 let lastAiConnectivityMessage = '';

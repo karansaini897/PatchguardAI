@@ -10,13 +10,13 @@ import {
   validateAndNormalizeFindingLocation,
   verifyFindingLocationIntegrity,
   verifyReviewFindingsIntegrity,
-} from './staticAnalyzer';
+} from './staticAnalyzer.ts';
 import {
   computePrecisionRecall,
   computeSeverityDistribution,
   filterFindings,
   matchFindingsToExpectedDefects,
-} from './evaluationMath';
+} from './evaluationMath.ts';
 import {
   AI_MODEL_ID,
   callAiWithRetry,
@@ -25,9 +25,9 @@ import {
   parseAndValidateAiFindings,
   parseRetryAfterMs,
   sanitizeErrorMessage,
-} from './reviewOrchestrator';
-import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData';
-import { ReviewFinding, SourceFileRecord } from '../types/patchguard';
+} from './reviewOrchestrator.ts';
+import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData.ts';
+import type { ReviewFinding, SourceFileRecord } from '../types/patchguard.ts';
 
 const sampleVulnFile: SourceFileRecord = {
   id: 'file-1',
@@ -1017,3 +1017,121 @@ test('13. Defensive workspace location validation (verifyReviewFindingsIntegrity
   assert.equal(batch[3].location.rawSnippet, '');
   assert.equal(batch[3].confidence, 'low');
 });
+
+test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe parameterized SQL, OOB loop, weak error handling, and harmless file', async () => {
+  // File 1: Contains cases 1..4 at deterministic line numbers
+  const controlledAuditFile: SourceFileRecord = {
+    id: 'ctrl-file-1',
+    filename: 'src/services/accountReconciliation.ts',
+    language: 'typescript',
+    changeStatus: 'modified',
+    lineCount: 22,
+    content: [
+      'export async function reconcileAccounts(db: any, tenantId: string, batchIds: string[]) {', // L1
+      '  // Case 1: Deliberately vulnerable SQL query (interpolation)',                         // L2
+      '  const unsafeSql = `SELECT * FROM accounts WHERE tenant_id = \'${tenantId}\'`;',        // L3
+      '  const unsafeRows = await db.query(unsafeSql);',                                        // L4
+      '',                                                                                       // L5
+      '  // Case 2: Safe parameterized SQL query (must NOT trigger PG-SEC-001)',                // L6
+      '  const safeSql = "SELECT * FROM accounts WHERE tenant_id = $1 AND active = $2";',       // L7
+      '  const safeRows = await db.query(safeSql, [tenantId, true]);',                          // L8
+      '',                                                                                       // L9
+      '  // Case 3: Out-of-bounds loop (i <= batchIds.length)',                                 // L10
+      '  const inspected: string[] = [];',                                                      // L11
+      '  for (let i = 0; i <= batchIds.length; i++) {',                                         // L12
+      '    inspected.push(batchIds[i].trim());',                                                // L13
+      '  }',                                                                                    // L14
+      '',                                                                                       // L15
+      '  // Case 4: Missing/weak error handling (silent catch swallowing)',                     // L16
+      '  try {',                                                                                // L17
+      '    await db.commitReconciliation(tenantId, inspected.length);',                         // L18
+      '  } catch (err) {',                                                                      // L19
+      '    // ignored',                                                                         // L20
+      '  }',                                                                                    // L21
+      '  return unsafeRows.length + safeRows.length;',                                          // L22
+      '}',                                                                                      // L23
+    ].join('\n'),
+  };
+
+  // File 2: Case 5 — Harmless utility file that must generate 0 findings
+  const harmlessUtilityFile: SourceFileRecord = {
+    id: 'ctrl-file-2',
+    filename: 'src/utils/currencyFormatter.ts',
+    language: 'typescript',
+    changeStatus: 'added',
+    lineCount: 10,
+    content: [
+      'export function formatCentsToUsd(cents: number): string {',
+      '  if (!Number.isFinite(cents)) {',
+      '    return "$0.00";',
+      '  }',
+      '  const dollars = (cents / 100).toFixed(2);',
+      '  return `$${dollars}`;',
+      '}',
+      '',
+      'export function clampBasisPoints(bps: number): number {',
+      '  return Math.max(0, Math.min(10000, Math.round(bps)));',
+      '}',
+    ].join('\n'),
+  };
+
+  const pipelineRes = await executeReviewPipeline(
+    {
+      title: 'Controlled 5-Case Verification Sample',
+      objective: 'Verify vulnerable SQL, safe parameterized SQL, OOB loop, weak catch, and harmless file',
+      focusAreas: ['security', 'correctness', 'error-handling'],
+      files: [controlledAuditFile, harmlessUtilityFile],
+      analysisMode: 'static-only',
+    },
+    { requestId: 'req-controlled-5-case', invokeAiModel: null }
+  );
+
+  assert.equal(pipelineRes.ok, true, 'Controlled review pipeline must succeed');
+  if (!pipelineRes.ok) return;
+
+  const findings = pipelineRes.review.findings;
+
+  // Verify exact 3 true positives and 0 false positives
+  assert.equal(
+    findings.length,
+    3,
+    `Expected exactly 3 findings (vulnerable SQL on L3, OOB loop on L12, silent catch on L19-21), got ${findings.length}`
+  );
+
+  // Case 1: Vulnerable SQL query on Line 3
+  const sqlFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-SEC-001');
+  assert.ok(sqlFinding, 'Must detect vulnerable SQL interpolation (PG-SEC-001)');
+  assert.equal(sqlFinding.location.filename, 'src/services/accountReconciliation.ts');
+  assert.equal(sqlFinding.location.startLine, 3);
+  assert.equal(sqlFinding.location.isValidLocation, true);
+
+  // Case 2: Safe parameterized query on Lines 7-8 must NOT generate any finding
+  const safeSqlFalsePositive = findings.find(
+    (f) =>
+      f.location.filename === 'src/services/accountReconciliation.ts' &&
+      (f.location.startLine === 7 || f.location.startLine === 8)
+  );
+  assert.equal(safeSqlFalsePositive, undefined, 'Safe parameterized SQL on L7-L8 must not generate a false positive');
+
+  // Case 3: Out-of-bounds loop on Line 12
+  const oobFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-BND-003');
+  assert.ok(oobFinding, 'Must detect off-by-one loop condition (PG-BND-003)');
+  assert.equal(oobFinding.location.filename, 'src/services/accountReconciliation.ts');
+  assert.equal(oobFinding.location.startLine, 12);
+  assert.equal(oobFinding.location.isValidLocation, true);
+
+  // Case 4: Weak/silent error handling on Line 19-21
+  const catchFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-ERR-004');
+  assert.ok(catchFinding, 'Must detect silent catch block (PG-ERR-004)');
+  assert.equal(catchFinding.location.filename, 'src/services/accountReconciliation.ts');
+  assert.equal(catchFinding.location.startLine, 19);
+  assert.equal(catchFinding.location.endLine, 21);
+  assert.equal(catchFinding.location.isValidLocation, true);
+
+  // Case 5: Harmless utility file must have 0 findings
+  const harmlessFindings = findings.filter(
+    (f) => f.location.filename === 'src/utils/currencyFormatter.ts'
+  );
+  assert.equal(harmlessFindings.length, 0, 'Harmless utility file must generate 0 findings');
+});
+
