@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AnalysisSourceType,
   FindingCategory,
@@ -7,13 +7,19 @@ import {
   ReviewRecord,
   SeverityLevel,
 } from '../types/patchguard';
-import { compareSeverity } from '../lib/staticAnalyzer';
+import {
+  resolveTargetSourceFile,
+  sortFindingsBySeverity,
+  verifyReviewFindingsIntegrity,
+} from '../lib/staticAnalyzer';
 import { computeSeverityDistribution } from '../lib/evaluationMath';
+import { persistence, WorkspaceLayoutPrefs } from '../lib/persistence';
 import { SourceViewer } from './SourceViewer';
 import {
   AnalysisSourceLabel,
   FindingStatusLabel,
   ReviewStatusLabel,
+  SEVERITY_META,
   SeverityLabel,
 } from './SeverityIndicator';
 import {
@@ -23,8 +29,10 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  CornerDownRight,
   FileCode2,
   Filter,
+  Layers,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -43,6 +51,21 @@ interface ReviewWorkspaceProps {
   onLoadIsolatedDemo: () => void;
 }
 
+const DEFAULT_LAYOUT: WorkspaceLayoutPrefs = {
+  sourceWidthPercent: 44,
+  findingsWidthPercent: 28,
+};
+
+function clampWorkspaceLayout(prefs: WorkspaceLayoutPrefs): WorkspaceLayoutPrefs {
+  const source = Math.max(25, Math.min(56, Math.round(prefs.sourceWidthPercent)));
+  const maxFindings = Math.min(45, 100 - source - 22);
+  const findings = Math.max(20, Math.min(maxFindings, Math.round(prefs.findingsWidthPercent)));
+  return {
+    sourceWidthPercent: source,
+    findingsWidthPercent: findings,
+  };
+}
+
 export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   review,
   initialSelectedFindingId = null,
@@ -55,9 +78,20 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     initialSelectedFindingId
   );
 
+  // Resizable panel proportions (persisted via localStorage)
+  const [layoutPrefs, setLayoutPrefs] = useState<WorkspaceLayoutPrefs>(() =>
+    clampWorkspaceLayout(persistence.getWorkspaceLayout())
+  );
+  const workspaceContainerRef = useRef<HTMLDivElement | null>(null);
+  const activeDragHandleRef = useRef<'left' | 'right' | null>(null);
+
+  // Analysis stages drawer visibility
+  const [showStagesPanel, setShowStagesPanel] = useState<boolean>(false);
+
   // Finding filters
   const [severityFilter, setSeverityFilter] = useState<SeverityLevel | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<FindingCategory | 'all'>('all');
+  const [sourceFilter, setSourceFilter] = useState<AnalysisSourceType | 'all'>('all');
   const [confidenceFilter, setConfidenceFilter] = useState<'high' | 'medium' | 'low' | 'all'>(
     'all'
   );
@@ -68,32 +102,46 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   // Mobile/Tablet active sub-pane ('source' | 'findings' | 'evidence')
   const [mobilePane, setMobilePane] = useState<'source' | 'findings' | 'evidence'>('findings');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedRemediationId, setCopiedRemediationId] = useState<string | null>(null);
   const [liveStatusAnnouncement, setLiveStatusAnnouncement] = useState<string>('');
 
-  // Synchronize default file and first finding whenever the active review changes
+  // Defensively verify all findings against the exact source files in this review
+  const verifiedFindings = useMemo(() => {
+    if (!review) return [];
+    const checked = verifyReviewFindingsIntegrity(review.findings, review.files);
+    return sortFindingsBySeverity(checked);
+  }, [review]);
+
+  // Synchronize default file, first finding, and stages drawer when active review changes
   useEffect(() => {
     if (!review) {
       setSelectedFileId('');
       setSelectedFindingId(null);
+      setShowStagesPanel(false);
       return;
     }
 
-    const sorted = [...review.findings].sort((a, b) => {
-      const sev = compareSeverity(a.severity, b.severity);
-      if (sev !== 0) return sev;
-      return a.location.startLine - b.location.startLine;
-    });
+    const hasDegradedStage =
+      review.status === 'completed_with_warnings' ||
+      review.status === 'failed' ||
+      review.stages.some((s) => s.status === 'failed' || s.status === 'warning');
+    setShowStagesPanel(hasDegradedStage);
 
     const targetFinding =
       (initialSelectedFindingId &&
-        review.findings.find((f) => f.id === initialSelectedFindingId)) ||
-      sorted[0] ||
+        verifiedFindings.find((f) => f.id === initialSelectedFindingId)) ||
+      verifiedFindings[0] ||
       null;
 
     if (targetFinding) {
       setSelectedFindingId(targetFinding.id);
-      if (targetFinding.location.fileId) {
-        setSelectedFileId(targetFinding.location.fileId);
+      const resolvedFile = resolveTargetSourceFile(
+        review.files,
+        targetFinding.location.fileId,
+        targetFinding.location.filename
+      );
+      if (resolvedFile && targetFinding.location.isValidLocation) {
+        setSelectedFileId(resolvedFile.id);
       } else {
         setSelectedFileId(review.files[0]?.id || '');
       }
@@ -104,6 +152,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
 
     setSeverityFilter('all');
     setCategoryFilter('all');
+    setSourceFilter('all');
     setConfidenceFilter('all');
     setStatusFilter('all');
     setFileFilter('all');
@@ -111,22 +160,81 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     setLiveStatusAnnouncement('');
   }, [review?.id, initialSelectedFindingId]);
 
-  const sortedFindings = useMemo(() => {
-    if (!review) return [];
-    return [...review.findings].sort((a, b) => {
-      const sevCmp = compareSeverity(a.severity, b.severity);
-      if (sevCmp !== 0) return sevCmp;
-      return a.location.startLine - b.location.startLine;
-    });
-  }, [review]);
+  // Pointer drag handlers for desktop resizable panels
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!activeDragHandleRef.current || !workspaceContainerRef.current) return;
+      const rect = workspaceContainerRef.current.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const relPercent = ((e.clientX - rect.left) / rect.width) * 100;
 
+      setLayoutPrefs((prev) => {
+        let next: WorkspaceLayoutPrefs;
+        if (activeDragHandleRef.current === 'left') {
+          next = clampWorkspaceLayout({
+            sourceWidthPercent: relPercent,
+            findingsWidthPercent: prev.findingsWidthPercent,
+          });
+        } else {
+          const desiredFindings = relPercent - prev.sourceWidthPercent;
+          next = clampWorkspaceLayout({
+            sourceWidthPercent: prev.sourceWidthPercent,
+            findingsWidthPercent: desiredFindings,
+          });
+        }
+        persistence.saveWorkspaceLayout(next);
+        return next;
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (activeDragHandleRef.current) {
+        activeDragHandleRef.current = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const updateLayoutAndPersist = (next: WorkspaceLayoutPrefs) => {
+    const clamped = clampWorkspaceLayout(next);
+    setLayoutPrefs(clamped);
+    persistence.saveWorkspaceLayout(clamped);
+  };
+
+  const isCustomLayout =
+    layoutPrefs.sourceWidthPercent !== DEFAULT_LAYOUT.sourceWidthPercent ||
+    layoutPrefs.findingsWidthPercent !== DEFAULT_LAYOUT.findingsWidthPercent;
+
+  const evidenceWidthPercent = Math.max(
+    22,
+    100 - layoutPrefs.sourceWidthPercent - layoutPrefs.findingsWidthPercent
+  );
+
+  // Filter findings using verified file resolution and all filter facets
   const filteredFindings = useMemo(() => {
-    return sortedFindings.filter((f) => {
+    if (!review) return [];
+    return verifiedFindings.filter((f) => {
       if (severityFilter !== 'all' && f.severity !== severityFilter) return false;
       if (categoryFilter !== 'all' && f.category !== categoryFilter) return false;
+      if (sourceFilter !== 'all' && f.analysisSource !== sourceFilter) return false;
       if (confidenceFilter !== 'all' && f.confidence !== confidenceFilter) return false;
       if (statusFilter !== 'all' && f.status !== statusFilter) return false;
-      if (fileFilter !== 'all' && f.location.fileId !== fileFilter) return false;
+      if (fileFilter !== 'all') {
+        const resolved = resolveTargetSourceFile(
+          review.files,
+          f.location.fileId,
+          f.location.filename
+        );
+        if (!resolved || resolved.id !== fileFilter) return false;
+      }
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase();
         const ruleId = f.staticCorroboration?.ruleId || '';
@@ -136,9 +244,11 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       return true;
     });
   }, [
-    sortedFindings,
+    review,
+    verifiedFindings,
     severityFilter,
     categoryFilter,
+    sourceFilter,
     confidenceFilter,
     statusFilter,
     fileFilter,
@@ -146,9 +256,18 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   ]);
 
   const selectedFinding: ReviewFinding | null = useMemo(() => {
-    if (!review || !selectedFindingId) return null;
-    return review.findings.find((f) => f.id === selectedFindingId) || null;
-  }, [review, selectedFindingId]);
+    if (!selectedFindingId) return null;
+    return verifiedFindings.find((f) => f.id === selectedFindingId) || null;
+  }, [verifiedFindings, selectedFindingId]);
+
+  const selectedFindingTargetFile = useMemo(() => {
+    if (!review || !selectedFinding) return null;
+    return resolveTargetSourceFile(
+      review.files,
+      selectedFinding.location.fileId,
+      selectedFinding.location.filename
+    );
+  }, [review, selectedFinding]);
 
   const selectedFindingIndex = useMemo(() => {
     if (!selectedFinding) return -1;
@@ -160,19 +279,33 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     return review.files.find((f) => f.id === selectedFileId) || review.files[0];
   }, [review, selectedFileId]);
 
+  // Only pass findings that resolve unambiguously to activeFile
   const findingsForActiveFile = useMemo(() => {
     if (!review || !activeFile) return [];
-    return sortedFindings.filter((f) => f.location.fileId === activeFile.id);
-  }, [review, activeFile, sortedFindings]);
+    return verifiedFindings.filter((f) => {
+      const resolved = resolveTargetSourceFile(
+        review.files,
+        f.location.fileId,
+        f.location.filename
+      );
+      return resolved?.id === activeFile.id;
+    });
+  }, [review, activeFile, verifiedFindings]);
 
   const distribution = useMemo(
-    () => computeSeverityDistribution(review?.findings || []),
-    [review?.findings]
+    () => computeSeverityDistribution(verifiedFindings),
+    [verifiedFindings]
+  );
+
+  const quarantinedFindingsCount = useMemo(
+    () => verifiedFindings.filter((f) => !f.location.isValidLocation).length,
+    [verifiedFindings]
   );
 
   const hasActiveFilters =
     severityFilter !== 'all' ||
     categoryFilter !== 'all' ||
+    sourceFilter !== 'all' ||
     confidenceFilter !== 'all' ||
     statusFilter !== 'all' ||
     fileFilter !== 'all' ||
@@ -181,6 +314,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   const resetAllFilters = () => {
     setSeverityFilter('all');
     setCategoryFilter('all');
+    setSourceFilter('all');
     setConfidenceFilter('all');
     setStatusFilter('all');
     setFileFilter('all');
@@ -188,6 +322,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     setLiveStatusAnnouncement('Reset all finding filters.');
   };
 
+  // Navigate to a finding only after verifying its target file association
   const handleSelectFinding = (finding: ReviewFinding, allowToggleDeselect = false) => {
     if (allowToggleDeselect && selectedFindingId === finding.id) {
       setSelectedFindingId(null);
@@ -195,9 +330,35 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       return;
     }
     setSelectedFindingId(finding.id);
-    if (finding.location.fileId && finding.location.fileId !== selectedFileId) {
-      setSelectedFileId(finding.location.fileId);
+
+    if (review) {
+      const targetFile = resolveTargetSourceFile(
+        review.files,
+        finding.location.fileId,
+        finding.location.filename
+      );
+      // Only switch active file when the finding resolves unambiguously to a file in this review
+      if (targetFile && targetFile.id !== selectedFileId) {
+        setSelectedFileId(targetFile.id);
+      }
     }
+  };
+
+  const handleNavigateToFindingSource = (finding: ReviewFinding) => {
+    if (!review || !finding.location.isValidLocation) return;
+    const targetFile = resolveTargetSourceFile(
+      review.files,
+      finding.location.fileId,
+      finding.location.filename
+    );
+    if (!targetFile) return;
+    setSelectedFileId(targetFile.id);
+    if (window.innerWidth < 1024) {
+      setMobilePane('source');
+    }
+    setLiveStatusAnnouncement(
+      `Navigated to ${targetFile.filename} line ${finding.location.startLine}.`
+    );
   };
 
   const handleStepFinding = (direction: -1 | 1) => {
@@ -225,6 +386,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
+          target.getAttribute('role') === 'separator' ||
           target.isContentEditable)
       ) {
         return;
@@ -264,7 +426,9 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             ? `-${finding.location.endLine}`
             : ''
         }`
-      : `${finding.location.filename} (Unverified Location)`;
+      : `${finding.location.filename} (Unverified Location · ${
+          finding.location.locationReason || 'quarantined'
+        })`;
     const ruleId = finding.staticCorroboration?.ruleId || 'AI-SEMANTIC';
     const text = [
       `[${finding.severity.toUpperCase()}] ${finding.title}`,
@@ -290,6 +454,18 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     setCopiedId(finding.id);
     setLiveStatusAnnouncement(`Copied evidence report for ${finding.title} to clipboard.`);
     setTimeout(() => setCopiedId(null), 1800);
+  };
+
+  const handleCopyRemediationOnly = (finding: ReviewFinding) => {
+    const text = finding.remediationCode
+      ? `${finding.suggestedRemediation}\n\n${finding.remediationCode}`
+      : finding.suggestedRemediation;
+    navigator.clipboard?.writeText(text).catch(() => {});
+    setCopiedRemediationId(finding.id);
+    setLiveStatusAnnouncement(
+      `Copied suggested remediation for ${finding.title}. Finding status remains ${finding.status}.`
+    );
+    setTimeout(() => setCopiedRemediationId(null), 1800);
   };
 
   const handleStatusChange = (finding: ReviewFinding, nextStatus: FindingStatus) => {
@@ -350,7 +526,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           <div className="flex items-center gap-2 font-mono text-[var(--pg-text-primary)]">
             <span className="font-semibold text-[var(--pg-info)]">[ISOLATED DEMO RECORD]</span>
             <span>
-              Pre-computed static demonstration of PR #418 ({review.findings.length} verified
+              Pre-computed static demonstration of PR #418 ({verifiedFindings.length} verified
               findings). Stored separately from your local review history.
             </span>
           </div>
@@ -364,19 +540,36 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Partial Completion / Degraded Stage Warnings Banner */}
-      {review.warningMessage && (
+      {/* Partial Completion / Degraded Stage / Quarantine Warnings Banner */}
+      {(review.warningMessage || quarantinedFindingsCount > 0) && (
         <div
           role="status"
-          className="px-4 py-2 bg-[var(--pg-warning-subtle)] border-b border-[var(--pg-border-default)] flex items-start gap-2.5 text-xs text-[var(--pg-text-primary)]"
+          className="px-4 py-2 bg-[var(--pg-warning-subtle)] border-b border-[var(--pg-border-default)] flex items-start justify-between gap-4 text-xs text-[var(--pg-text-primary)]"
         >
-          <AlertTriangle className="w-4 h-4 text-[var(--pg-warning)] shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <div className="font-semibold font-mono text-[var(--pg-warning)]">
-              REVIEW PIPELINE DIAGNOSTIC NOTICE
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-[var(--pg-warning)] shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="font-semibold font-mono text-[var(--pg-warning)]">
+                REVIEW PIPELINE & LOCATION VERIFICATION NOTICE
+              </div>
+              {review.warningMessage && (
+                <div className="text-[var(--pg-text-secondary)]">{review.warningMessage}</div>
+              )}
+              {quarantinedFindingsCount > 0 && !review.warningMessage?.includes('quarantined') && (
+                <div className="text-[var(--pg-text-secondary)]">
+                  {quarantinedFindingsCount} finding(s) contained unverified or out-of-bounds
+                  source locations and were quarantined by the frontend location verifier.
+                </div>
+              )}
             </div>
-            <div className="text-[var(--pg-text-secondary)]">{review.warningMessage}</div>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowStagesPanel((prev) => !prev)}
+            className="px-2.5 py-1 font-mono text-[11px] border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] shrink-0 cursor-pointer"
+          >
+            {showStagesPanel ? 'Hide Stage Telemetry' : 'Inspect Stage Telemetry'}
+          </button>
         </div>
       )}
 
@@ -403,9 +596,33 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           </p>
         </div>
 
-        {/* Severity Distribution Summary & Stage Statuses */}
-        <div className="flex flex-wrap items-center gap-4 text-xs font-mono shrink-0">
-          <div className="flex items-center gap-3 border-r border-[var(--pg-border-default)] pr-4 tabular-nums">
+        {/* Severity Distribution Bar, Counts, Stage Drawer Toggle & Split Reset */}
+        <div className="flex flex-wrap items-center gap-3 text-xs font-mono shrink-0">
+          {/* Proportional Severity Distribution Bar (only when findings exist) */}
+          {distribution.total > 0 && (
+            <div
+              aria-label="Severity distribution bar"
+              title={`Critical: ${distribution.critical}, High: ${distribution.high}, Medium: ${distribution.medium}, Low: ${distribution.low}, Info: ${distribution.info}`}
+              className="hidden sm:flex w-24 h-2 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] overflow-hidden"
+            >
+              {(['critical', 'high', 'medium', 'low', 'info'] as SeverityLevel[]).map((sev) => {
+                const count = distribution[sev];
+                if (count <= 0) return null;
+                const pct = (count / distribution.total) * 100;
+                return (
+                  <div
+                    key={sev}
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: SEVERITY_META[sev].barColor,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2.5 border-r border-[var(--pg-border-default)] pr-3 tabular-nums">
             <span className="text-[var(--pg-text-muted)]">FINDINGS ({distribution.total}):</span>
             <span className="text-[var(--pg-critical)] font-semibold">
               ◆ {distribution.critical} Crit
@@ -417,36 +634,87 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             <span className="text-[var(--pg-info)]">▪ {distribution.low} Low</span>
           </div>
 
-          {/* Pipeline Stages Summary */}
-          <div className="hidden xl:flex items-center gap-3 text-[11px]">
-            {review.stages.map((st) => (
-              <span
-                key={st.stageId}
-                title={st.errorMessage || `${st.name} (${st.engine})`}
-                className="text-[var(--pg-text-secondary)] tabular-nums"
-              >
-                {st.stageId === 'static_analysis'
-                  ? 'Static'
-                  : st.stageId === 'ai_semantic_analysis'
-                  ? 'AI Semantic'
-                  : 'Corroboration'}
-                :{' '}
-                <strong
-                  className={
-                    st.status === 'succeeded'
-                      ? 'text-[var(--pg-success)]'
-                      : st.status === 'failed' || st.status === 'warning'
-                      ? 'text-[var(--pg-warning)]'
-                      : 'text-[var(--pg-text-muted)]'
-                  }
-                >
-                  {st.status.toUpperCase()}
-                </strong>
-              </span>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowStagesPanel((prev) => !prev)}
+            aria-expanded={showStagesPanel}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] border transition-colors cursor-pointer ${
+              showStagesPanel
+                ? 'border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)]'
+                : 'border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Analysis Stages ({review.stages.length})</span>
+          </button>
+
+          {isCustomLayout && (
+            <button
+              type="button"
+              onClick={() => updateLayoutAndPersist(DEFAULT_LAYOUT)}
+              title="Reset desktop panel widths to default (44% / 28% / 28%)"
+              className="hidden lg:inline-flex items-center gap-1 px-2 py-1 text-[11px] border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-muted)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Split</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Expandable Analysis Stages & Pipeline Telemetry Panel */}
+      {showStagesPanel && (
+        <section
+          aria-label="Analysis pipeline stages breakdown"
+          className="px-4 py-3 bg-[var(--pg-bg-workspace)] border-b border-[var(--pg-border-default)] grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono"
+        >
+          {review.stages.map((st) => {
+            const statusColor =
+              st.status === 'succeeded'
+                ? 'text-[var(--pg-success)]'
+                : st.status === 'failed'
+                ? 'text-[var(--pg-danger)]'
+                : st.status === 'warning'
+                ? 'text-[var(--pg-warning)]'
+                : 'text-[var(--pg-text-muted)]';
+
+            return (
+              <div
+                key={st.stageId}
+                className="p-2.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-[var(--pg-text-primary)] truncate">
+                    {st.name}
+                  </span>
+                  <span className={`font-semibold uppercase ${statusColor}`}>
+                    {st.status}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[var(--pg-text-secondary)] truncate">
+                  Engine: {st.engine}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--pg-text-muted)] tabular-nums pt-0.5">
+                  <span>Duration: {st.durationMs}ms</span>
+                  <span>Findings: {st.findingsProduced}</span>
+                  {typeof st.attempts === 'number' && st.attempts > 0 && (
+                    <span>
+                      Attempts: {st.attempts}
+                      {st.retriedCount ? ` (${st.retriedCount} retries)` : ''}
+                    </span>
+                  )}
+                </div>
+                {(st.errorCode || st.errorMessage) && (
+                  <div className="pt-1 border-t border-[var(--pg-border-subtle)] text-[11px] text-[var(--pg-warning)] break-words">
+                    {st.errorCode ? `[${st.errorCode}] ` : ''}
+                    {st.errorMessage}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       {/* Mobile / Tablet Sub-Pane Switcher (< 1024px) */}
       <div className="lg:hidden border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)]">
@@ -499,15 +767,17 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               </span>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              {mobilePane !== 'source' && selectedFinding.location.isValidLocation && (
-                <button
-                  type="button"
-                  onClick={() => setMobilePane('source')}
-                  className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
-                >
-                  View L{selectedFinding.location.startLine}
-                </button>
-              )}
+              {mobilePane !== 'source' &&
+                selectedFinding.location.isValidLocation &&
+                selectedFindingTargetFile && (
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateToFindingSource(selectedFinding)}
+                    className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
+                  >
+                    View L{selectedFinding.location.startLine}
+                  </button>
+                )}
               {mobilePane !== 'evidence' && (
                 <button
                   type="button"
@@ -522,30 +792,46 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         )}
       </div>
 
-      {/* Three-Pane Split Investigation Canvas (Desktop 12-Col Grid: 5 / 4 / 3) */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
+      {/* Three-Pane Resizable Investigation Canvas */}
+      <div
+        ref={workspaceContainerRef}
+        className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden"
+      >
         {/* ===================================================================
-            PANEL A: SOURCE CODE & FILE SWITCHER (5 Columns on Desktop)
+            PANEL A: SOURCE CODE & FILE SWITCHER
             =================================================================== */}
         <section
           aria-label="Source Code Viewer"
-          className={`lg:col-span-5 flex flex-col min-h-0 border-r border-[var(--pg-border-default)] ${
+          style={{ width: `${layoutPrefs.sourceWidthPercent}%` }}
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 border-r border-[var(--pg-border-default)] ${
             mobilePane === 'source' ? 'flex' : 'hidden lg:flex'
           }`}
         >
-          {/* File Switcher Tabs */}
+          {/* File Switcher Tabs with Language, Change Status, Line Count & Verified Finding Count */}
           <div className="px-2 py-1.5 bg-[var(--pg-bg-workspace)] border-b border-[var(--pg-border-default)] flex items-center gap-1 overflow-x-auto">
             {review.files.map((file) => {
               const isSelected = activeFile?.id === file.id;
-              const fileFindingCount = review.findings.filter(
-                (f) => f.location.fileId === file.id
-              ).length;
+              const fileFindingCount = verifiedFindings.filter((f) => {
+                const resolved = resolveTargetSourceFile(
+                  review.files,
+                  f.location.fileId,
+                  f.location.filename
+                );
+                return resolved?.id === file.id;
+              }).length;
+              const changeBadge =
+                file.changeStatus === 'modified'
+                  ? 'MOD'
+                  : file.changeStatus === 'added'
+                  ? 'ADD'
+                  : 'SNIP';
+
               return (
                 <button
                   key={file.id}
                   type="button"
                   onClick={() => setSelectedFileId(file.id)}
-                  title={file.filename}
+                  title={`${file.filename} (${file.language.toUpperCase()} · ${file.changeStatus} · ${file.lineCount} lines)`}
                   className={`inline-flex items-center gap-2 px-3 py-1 text-xs font-mono transition-colors shrink-0 cursor-pointer border ${
                     isSelected
                       ? 'bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] border-[var(--pg-border-strong)] font-semibold'
@@ -554,7 +840,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 >
                   <FileCode2 className="w-3.5 h-3.5 text-[var(--pg-text-muted)]" />
                   <span>{file.filename.split('/').pop() || file.filename}</span>
-                  <span className="text-[11px] text-[var(--pg-text-muted)] tabular-nums">
+                  <span className="text-[10px] text-[var(--pg-text-muted)] uppercase">
+                    {changeBadge} · {file.lineCount}L
+                  </span>
+                  <span className="text-[11px] text-[var(--pg-accent-text)] tabular-nums">
                     ({fileFindingCount})
                   </span>
                 </button>
@@ -584,12 +873,42 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           </div>
         </section>
 
+        {/* RESIZE HANDLE 1: Between Panel A (Source) and Panel B (Findings) */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize source viewer and findings panel"
+          tabIndex={0}
+          onMouseDown={() => {
+            activeDragHandleRef.current = 'left';
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              updateLayoutAndPersist({
+                ...layoutPrefs,
+                sourceWidthPercent: layoutPrefs.sourceWidthPercent - 2,
+              });
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              updateLayoutAndPersist({
+                ...layoutPrefs,
+                sourceWidthPercent: layoutPrefs.sourceWidthPercent + 2,
+              });
+            }
+          }}
+          className="hidden lg:flex w-1.5 bg-[var(--pg-bg-workspace)] hover:bg-[var(--pg-accent)] focus:bg-[var(--pg-accent)] cursor-col-resize items-center justify-center transition-colors shrink-0"
+        />
+
         {/* ===================================================================
-            PANEL B: PRIORITIZED FINDINGS & FILTER BAR (4 Columns on Desktop)
+            PANEL B: PRIORITIZED FINDINGS & FILTER BAR
             =================================================================== */}
         <section
           aria-label="Prioritized Review Findings"
-          className={`lg:col-span-4 flex flex-col min-h-0 border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
+          style={{ width: `${layoutPrefs.findingsWidthPercent}%` }}
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
             mobilePane === 'findings' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -599,7 +918,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               <div className="flex items-center gap-1.5 font-mono text-xs font-semibold text-[var(--pg-text-primary)]">
                 <Filter className="w-3.5 h-3.5 text-[var(--pg-text-muted)]" />
                 <span className="tabular-nums">
-                  FINDINGS ({filteredFindings.length} / {review.findings.length})
+                  FINDINGS ({filteredFindings.length} / {verifiedFindings.length})
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -635,8 +954,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               />
             </div>
 
-            {/* 4-Column Filter Selectors */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-mono">
+            {/* 6 Dedicated Filter Selectors (Severity, Category, Status, Engine Source, File, Confidence) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs font-mono">
               <select
                 aria-label="Filter by Severity"
                 value={severityFilter}
@@ -688,38 +1007,54 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               </select>
 
               <select
-                aria-label="Filter by Confidence or File"
-                value={fileFilter !== 'all' ? `file:${fileFilter}` : `conf:${confidenceFilter}`}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val.startsWith('file:')) {
-                    setFileFilter(val.replace('file:', ''));
-                    setConfidenceFilter('all');
-                  } else {
-                    setFileFilter('all');
-                    setConfidenceFilter(
-                      val.replace('conf:', '') as 'high' | 'medium' | 'low' | 'all'
-                    );
-                  }
-                }}
+                aria-label="Filter by Analysis Engine Source"
+                value={sourceFilter}
+                onChange={(e) =>
+                  setSourceFilter(e.target.value as AnalysisSourceType | 'all')
+                }
                 className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
               >
-                <option value="conf:all">Conf / File: All</option>
-                <option value="conf:high">Conf: High</option>
-                <option value="conf:medium">Conf: Medium</option>
-                <option value="conf:low">Conf: Low</option>
+                <option value="all">Engine: All</option>
+                <option value="corroborated">Corroborated (Static+AI)</option>
+                <option value="static-pattern">Static Analyzer Only</option>
+                <option value="ai-gemini">AI Semantic Only</option>
+              </select>
+
+              <select
+                aria-label="Filter by Source File"
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+              >
+                <option value="all">File: All ({review.files.length})</option>
                 {review.files.map((f) => (
-                  <option key={f.id} value={`file:${f.id}`}>
-                    File: {f.filename.split('/').pop() || f.filename}
+                  <option key={f.id} value={f.id}>
+                    {f.filename.split('/').pop() || f.filename}
                   </option>
                 ))}
+              </select>
+
+              <select
+                aria-label="Filter by Confidence Level"
+                value={confidenceFilter}
+                onChange={(e) =>
+                  setConfidenceFilter(
+                    e.target.value as 'high' | 'medium' | 'low' | 'all'
+                  )
+                }
+                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+              >
+                <option value="all">Confidence: All</option>
+                <option value="high">Conf: High</option>
+                <option value="medium">Conf: Medium</option>
+                <option value="low">Conf: Low</option>
               </select>
             </div>
           </div>
 
           {/* Findings List Surface */}
           <div className="flex-1 overflow-y-auto divide-y divide-[var(--pg-border-default)]">
-            {review.findings.length === 0 ? (
+            {verifiedFindings.length === 0 ? (
               /* Zero-Findings Review State (Distinguished from Filter-Empty State) */
               <div className="p-6 space-y-3 text-xs">
                 <div className="flex items-center gap-2 text-[var(--pg-success)] font-mono font-semibold">
@@ -745,8 +1080,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   0 FINDINGS MATCH CURRENT FILTERS
                 </div>
                 <p className="text-[var(--pg-text-secondary)] leading-relaxed">
-                  This review contains {review.findings.length} total finding(s), but none match the
-                  active filter criteria.
+                  This review contains {verifiedFindings.length} total finding(s), but none match
+                  the active filter criteria.
                 </p>
                 <button
                   type="button"
@@ -759,9 +1094,16 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             ) : (
               filteredFindings.map((finding) => {
                 const isSelected = selectedFinding?.id === finding.id;
+                const resolvedFile = resolveTargetSourceFile(
+                  review.files,
+                  finding.location.fileId,
+                  finding.location.filename
+                );
                 const shortFile =
-                  finding.location.filename.split('/').pop() || finding.location.filename;
+                  (resolvedFile?.filename || finding.location.filename).split('/').pop() ||
+                  finding.location.filename;
                 const ruleId = finding.staticCorroboration?.ruleId;
+
                 return (
                   <div
                     key={finding.id}
@@ -819,9 +1161,13 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--pg-text-muted)] tabular-nums pt-1 border-t border-[var(--pg-border-subtle)]">
                       <span
                         className="truncate max-w-[210px] text-[var(--pg-text-secondary)]"
-                        title={finding.location.filename}
+                        title={
+                          finding.location.isValidLocation
+                            ? `${finding.location.filename}:L${finding.location.startLine}–L${finding.location.endLine}`
+                            : finding.location.validationNote || 'Location Quarantined'
+                        }
                       >
-                        {finding.location.isValidLocation ? (
+                        {finding.location.isValidLocation && resolvedFile ? (
                           <>
                             {shortFile}:L{finding.location.startLine}
                             {finding.location.endLine !== finding.location.startLine
@@ -830,7 +1176,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                           </>
                         ) : (
                           <span className="text-[var(--pg-warning)]">
-                            {shortFile} · Location Quarantined
+                            {shortFile} · Quarantined ({finding.location.locationReason || 'invalid'})
                           </span>
                         )}
                       </span>
@@ -847,12 +1193,42 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           </div>
         </section>
 
+        {/* RESIZE HANDLE 2: Between Panel B (Findings) and Panel C (Evidence) */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize findings panel and evidence details panel"
+          tabIndex={0}
+          onMouseDown={() => {
+            activeDragHandleRef.current = 'right';
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              updateLayoutAndPersist({
+                ...layoutPrefs,
+                findingsWidthPercent: layoutPrefs.findingsWidthPercent - 2,
+              });
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              updateLayoutAndPersist({
+                ...layoutPrefs,
+                findingsWidthPercent: layoutPrefs.findingsWidthPercent + 2,
+              });
+            }
+          }}
+          className="hidden lg:flex w-1.5 bg-[var(--pg-bg-workspace)] hover:bg-[var(--pg-accent)] focus:bg-[var(--pg-accent)] cursor-col-resize items-center justify-center transition-colors shrink-0"
+        />
+
         {/* ===================================================================
-            PANEL C: EVIDENCE, REMEDIATION & TRIAGE ACTIONS (3 Columns on Desktop)
+            PANEL C: EVIDENCE, REMEDIATION & TRIAGE ACTIONS
             =================================================================== */}
         <section
           aria-label="Finding Evidence and Remediation Details"
-          className={`lg:col-span-3 flex flex-col min-h-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
+          style={{ width: `${evidenceWidthPercent}%` }}
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
             mobilePane === 'evidence' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -920,30 +1296,33 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     {selectedFinding.title}
                   </h2>
 
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-[var(--pg-text-secondary)] tabular-nums">
-                    <span>Category: {selectedFinding.category}</span>
-                    {selectedFinding.staticCorroboration?.ruleId && (
-                      <span>Rule: {selectedFinding.staticCorroboration.ruleId}</span>
-                    )}
-                    {selectedFinding.location.isValidLocation ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-[var(--pg-text-secondary)] tabular-nums pt-0.5">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span>Category: {selectedFinding.category}</span>
+                      {selectedFinding.staticCorroboration?.ruleId && (
+                        <span>Rule: {selectedFinding.staticCorroboration.ruleId}</span>
+                      )}
+                    </div>
+
+                    {selectedFinding.location.isValidLocation && selectedFindingTargetFile ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedFileId(selectedFinding.location.fileId);
-                          if (window.innerWidth < 1024) {
-                            setMobilePane('source');
-                          }
-                        }}
-                        className="text-[var(--pg-accent-text)] hover:underline cursor-pointer"
+                        onClick={() => handleNavigateToFindingSource(selectedFinding)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] cursor-pointer"
                       >
-                        {selectedFinding.location.filename}:L{selectedFinding.location.startLine}
-                        {selectedFinding.location.endLine !== selectedFinding.location.startLine
-                          ? `–L${selectedFinding.location.endLine}`
-                          : ''}
+                        <CornerDownRight className="w-3 h-3" />
+                        <span>
+                          {selectedFindingTargetFile.filename}:L
+                          {selectedFinding.location.startLine}
+                          {selectedFinding.location.endLine !== selectedFinding.location.startLine
+                            ? `–L${selectedFinding.location.endLine}`
+                            : ''}
+                        </span>
                       </button>
                     ) : (
                       <span className="text-[var(--pg-warning)]">
-                        {selectedFinding.location.filename} (Location Quarantined)
+                        {selectedFinding.location.filename} · Location Quarantined (
+                        {selectedFinding.location.locationReason || 'unverified'})
                       </span>
                     )}
                   </div>
@@ -965,10 +1344,14 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <span className="font-semibold text-[var(--pg-text-secondary)] uppercase">
                       03 · SUPPORTING CODE EVIDENCE
                     </span>
-                    {selectedFinding.location.isValidLocation && (
+                    {selectedFinding.location.isValidLocation ? (
                       <span className="text-[var(--pg-text-muted)] tabular-nums">
                         Verified L{selectedFinding.location.startLine}–L
                         {selectedFinding.location.endLine}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--pg-warning)] uppercase">
+                        Quarantined ({selectedFinding.location.locationReason || 'unverified'})
                       </span>
                     )}
                   </div>
@@ -1000,9 +1383,11 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                       </table>
                     </div>
                   ) : (
-                    <div className="p-2.5 bg-[var(--pg-warning-subtle)] border border-[var(--pg-border-default)] font-mono text-[11px] text-[var(--pg-warning)]">
-                      {selectedFinding.location.validationNote ||
-                        `Location Quarantined: The model reported line numbers outside the verified bounds of ${selectedFinding.location.filename}. PatchGuard never fabricates or clamps unverified code snippets.`}
+                    <div className="p-2.5 bg-[var(--pg-warning-subtle)] border border-[var(--pg-border-default)] font-mono text-[11px] text-[var(--pg-warning)] space-y-1">
+                      <div>
+                        {selectedFinding.location.validationNote ||
+                          `Location Quarantined: The model reported line numbers outside the verified bounds of ${selectedFinding.location.filename}. PatchGuard never fabricates or clamps unverified code snippets.`}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1023,9 +1408,28 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <span className="font-semibold text-[var(--pg-accent-text)] uppercase">
                       05 · RECOMMENDED REMEDIATION
                     </span>
-                    <span className="text-[10px] text-[var(--pg-warning)]">
-                      [UNVERIFIED SUGGESTED FIX]
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[var(--pg-warning)]">
+                        [UNVERIFIED SUGGESTED FIX]
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyRemediationOnly(selectedFinding)}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+                      >
+                        {copiedRemediationId === selectedFinding.id ? (
+                          <>
+                            <Check className="w-2.5 h-2.5 text-[var(--pg-success)]" />
+                            <span className="text-[var(--pg-success)]">Copied Fix</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-2.5 h-2.5" />
+                            <span>Copy Remediation</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[var(--pg-text-primary)] leading-relaxed">
                     {selectedFinding.suggestedRemediation}
@@ -1177,7 +1581,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   ACTIVE REVIEW SUMMARY
                 </div>
                 <div>Files Analyzed: {review.files.length}</div>
-                <div>Total Findings: {review.findings.length}</div>
+                <div>Total Findings: {verifiedFindings.length}</div>
                 <div>Model & Engine Stack: {review.modelUsed}</div>
               </div>
             </div>

@@ -224,7 +224,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
             onChange={(e) => setEvalEngineMode(e.target.value as 'hybrid' | 'static-only')}
             className="px-3 py-2 text-xs font-mono bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
           >
-            <option value="hybrid">Engine: Hybrid (Static + Gemini 3.8 Flash)</option>
+            <option value="hybrid">Engine: Hybrid (Static + Gemini 3.1 Flash Lite)</option>
             <option value="static-only">Engine: Deterministic Static Analyzer Only</option>
           </select>
 

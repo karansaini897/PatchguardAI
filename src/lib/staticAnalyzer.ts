@@ -555,7 +555,17 @@ export function verifyFindingLocationIntegrity(
   finding: ReviewFinding,
   files: SourceFileRecord[]
 ): FindingLocation {
-  const loc = finding.location;
+  const loc = finding?.location;
+  if (!loc || typeof loc !== 'object') {
+    return createQuarantinedFindingLocation({
+      fileId: 'unmatched-file',
+      filename: 'unknown-file',
+      rawStartLine: 0,
+      rawEndLine: 0,
+      reason: 'missing_line',
+      validationNote: 'Finding is missing location metadata and has been quarantined.',
+    });
+  }
 
   // If already quarantined as wrong_file or missing_line or insufficient_evidence, preserve quarantine
   if (!loc.isValidLocation && loc.locationReason && loc.locationReason !== 'verified') {
@@ -615,6 +625,46 @@ export function verifyFindingLocationIntegrity(
   }
 
   return revalidated;
+}
+
+/**
+ * Defensively verifies a collection of ReviewFindings against the exact SourceFileRecords
+ * in a review. Preserves valid findings while quarantining any finding with a wrong file,
+ * missing/out-of-bounds line range, or stale source hash, downgrading its confidence to 'low'.
+ */
+export function verifyReviewFindingsIntegrity(
+  findings: ReviewFinding[],
+  files: SourceFileRecord[]
+): ReviewFinding[] {
+  if (!Array.isArray(findings)) return [];
+  const safeFiles = Array.isArray(files) ? files : [];
+
+  return findings.map((finding) => {
+    const verifiedLocation = verifyFindingLocationIntegrity(finding, safeFiles);
+    if (!verifiedLocation.isValidLocation) {
+      const quarantineNote =
+        verifiedLocation.validationNote ||
+        'Source location could not be verified against the reviewed file contents.';
+      const existingNote = finding.uncertaintyNote || '';
+      const combinedNote = existingNote.includes(quarantineNote)
+        ? existingNote
+        : existingNote
+        ? `${existingNote} ${quarantineNote}`
+        : quarantineNote;
+
+      return {
+        ...finding,
+        confidence: 'low',
+        uncertaintyNote: combinedNote,
+        location: verifiedLocation,
+      };
+    }
+
+    return {
+      ...finding,
+      location: verifiedLocation,
+    };
+  });
 }
 
 /**

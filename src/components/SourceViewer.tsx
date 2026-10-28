@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ReviewFinding, SourceFileRecord } from '../types/patchguard';
-import { compareSeverity } from '../lib/staticAnalyzer';
+import {
+  compareSeverity,
+  resolveTargetSourceFile,
+  verifyFindingLocationIntegrity,
+} from '../lib/staticAnalyzer';
 import { SEVERITY_META, SeverityLabel } from './SeverityIndicator';
 import { Check, Copy, CornerDownRight, WrapText } from 'lucide-react';
 
@@ -89,18 +93,27 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
 
   const lines = useMemo(() => file.content.split(/\r?\n/), [file.content]);
 
-  // Only map findings with verified source line numbers inside this exact file
-  const validFindings = useMemo(
-    () =>
-      findingsForFile.filter(
-        (f) =>
-          f.location.isValidLocation &&
-          f.location.startLine >= 1 &&
-          f.location.endLine <= lines.length &&
-          f.location.startLine <= f.location.endLine
-      ),
-    [findingsForFile, lines.length]
-  );
+  // Defensively verify every candidate finding against this exact SourceFileRecord
+  const validFindings = useMemo(() => {
+    const verified: ReviewFinding[] = [];
+    for (const f of findingsForFile) {
+      const target = resolveTargetSourceFile([file], f.location?.fileId, f.location?.filename);
+      if (!target || target.id !== file.id) continue;
+      const checkedLocation = verifyFindingLocationIntegrity(f, [file]);
+      if (
+        checkedLocation.isValidLocation &&
+        checkedLocation.startLine >= 1 &&
+        checkedLocation.endLine <= lines.length &&
+        checkedLocation.startLine <= checkedLocation.endLine
+      ) {
+        verified.push({
+          ...f,
+          location: checkedLocation,
+        });
+      }
+    }
+    return verified;
+  }, [findingsForFile, file, lines.length]);
 
   // Map each 1-indexed line number to all valid findings that cover that line
   const findingsByLine = useMemo(() => {
@@ -116,17 +129,32 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     return map;
   }, [validFindings]);
 
-  const isSelectedFindingInThisFile = Boolean(
-    selectedFinding &&
-      selectedFinding.location.fileId === file.id &&
-      selectedFinding.location.isValidLocation &&
-      selectedFinding.location.startLine >= 1 &&
-      selectedFinding.location.endLine <= lines.length
-  );
+  // Verify the selected finding against this exact file before highlighting or scrolling
+  const verifiedSelectedLocation = useMemo(() => {
+    if (!selectedFinding) return null;
+    const target = resolveTargetSourceFile(
+      [file],
+      selectedFinding.location?.fileId,
+      selectedFinding.location?.filename
+    );
+    if (!target || target.id !== file.id) return null;
+    const loc = verifyFindingLocationIntegrity(selectedFinding, [file]);
+    if (
+      !loc.isValidLocation ||
+      loc.startLine < 1 ||
+      loc.endLine > lines.length ||
+      loc.startLine > loc.endLine
+    ) {
+      return null;
+    }
+    return loc;
+  }, [selectedFinding, file, lines.length]);
+
+  const isSelectedFindingInThisFile = Boolean(verifiedSelectedLocation);
 
   const scrollToActiveFinding = () => {
-    if (!isSelectedFindingInThisFile || !selectedFinding) return;
-    const targetRow = lineRefs.current[selectedFinding.location.startLine];
+    if (!verifiedSelectedLocation) return;
+    const targetRow = lineRefs.current[verifiedSelectedLocation.startLine];
     if (targetRow) {
       targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -135,7 +163,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   // Scroll selected finding into view when selection changes
   useEffect(() => {
     scrollToActiveFinding();
-  }, [selectedFinding, file.id, lines.length]);
+  }, [verifiedSelectedLocation?.startLine, file.id, lines.length]);
 
   const handleCopyFileSource = () => {
     navigator.clipboard?.writeText(file.content).catch(() => {});
@@ -155,7 +183,8 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
             {file.filename}
           </span>
           <span className="text-[var(--pg-text-muted)] shrink-0">
-            ({file.language.toUpperCase()} · {lines.length} lines)
+            ({file.language.toUpperCase()} · {file.changeStatus.toUpperCase()} · {lines.length}{' '}
+            lines)
           </span>
         </div>
 
@@ -164,18 +193,18 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
             {validFindings.length} verified finding{validFindings.length === 1 ? '' : 's'}
           </span>
 
-          {isSelectedFindingInThisFile && selectedFinding && (
+          {verifiedSelectedLocation && (
             <button
               type="button"
               onClick={scrollToActiveFinding}
-              title={`Scroll to selected finding at L${selectedFinding.location.startLine}`}
+              title={`Scroll to selected finding at L${verifiedSelectedLocation.startLine}`}
               className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] border border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] hover:bg-[var(--pg-bg-interactive)] cursor-pointer tabular-nums"
             >
               <CornerDownRight className="w-3 h-3" />
               <span>
-                L{selectedFinding.location.startLine}
-                {selectedFinding.location.endLine !== selectedFinding.location.startLine
-                  ? `–${selectedFinding.location.endLine}`
+                L{verifiedSelectedLocation.startLine}
+                {verifiedSelectedLocation.endLine !== verifiedSelectedLocation.startLine
+                  ? `–${verifiedSelectedLocation.endLine}`
                   : ''}
               </span>
             </button>
@@ -228,15 +257,15 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
 
               const isSelectedRange = Boolean(
                 isSelectedFindingInThisFile &&
-                  selectedFinding &&
-                  lineNumber >= selectedFinding.location.startLine &&
-                  lineNumber <= selectedFinding.location.endLine
+                  verifiedSelectedLocation &&
+                  lineNumber >= verifiedSelectedLocation.startLine &&
+                  lineNumber <= verifiedSelectedLocation.endLine
               );
 
               const isSelectedStartLine = Boolean(
                 isSelectedRange &&
-                  selectedFinding &&
-                  lineNumber === selectedFinding.location.startLine
+                  verifiedSelectedLocation &&
+                  lineNumber === verifiedSelectedLocation.startLine
               );
 
               // Distinguish selected finding range vs other finding lines vs normal lines
@@ -319,7 +348,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   </tr>
 
                   {/* Inline Finding Callout Banner directly below the start line of the selected finding */}
-                  {isSelectedStartLine && selectedFinding && (
+                  {isSelectedStartLine && selectedFinding && verifiedSelectedLocation && (
                     <tr className="bg-[var(--pg-bg-elevated)] border-y border-[var(--pg-border-strong)]">
                       <td className="px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-strong)] align-top uppercase">
                         ACTIVE
@@ -338,9 +367,9 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                             )}
                           </div>
                           <span className="font-mono text-[11px] text-[var(--pg-text-secondary)] tabular-nums">
-                            Verified L{selectedFinding.location.startLine}
-                            {selectedFinding.location.endLine !== selectedFinding.location.startLine
-                              ? `–L${selectedFinding.location.endLine}`
+                            Verified L{verifiedSelectedLocation.startLine}
+                            {verifiedSelectedLocation.endLine !== verifiedSelectedLocation.startLine
+                              ? `–L${verifiedSelectedLocation.endLine}`
                               : ''}{' '}
                             · {selectedFinding.confidence.toUpperCase()} CONFIDENCE
                           </span>

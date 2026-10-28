@@ -58,6 +58,9 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
 
   // Submission & Error states
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submittingMode, setSubmittingMode] = useState<'hybrid' | 'static-only' | 'ai-only' | null>(
+    null
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<StructuredApiError | null>(null);
 
@@ -142,6 +145,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     }
 
     const modeToUse = overrideMode || analysisMode;
+    setSubmittingMode(modeToUse);
     setIsSubmitting(true);
 
     const payload: ReviewRequestPayload = {
@@ -156,6 +160,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
 
     const result = await executeCodeReview(payload);
     setIsSubmitting(false);
+    setSubmittingMode(null);
 
     if (!result.ok) {
       setApiError((result as { ok: false; error: StructuredApiError }).error);
@@ -554,8 +559,8 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
             </select>
           </div>
 
-          {/* Active Pipeline Execution Stage Breakdown */}
-          {isSubmitting && (
+          {/* Active Request Scope & Stage Configuration (Only shown while request is in flight) */}
+          {isSubmitting && submittingMode && (
             <div
               role="status"
               aria-live="polite"
@@ -563,29 +568,38 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
             >
               <div className="flex items-center gap-2 text-[var(--pg-accent-text)] font-semibold">
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <span>EXECUTING REVIEW PIPELINE ({analysisMode.toUpperCase()})</span>
+                <span>
+                  REQUEST IN FLIGHT · POST /api/review ({submittingMode.toUpperCase()})
+                </span>
               </div>
               <div className="space-y-1 text-[11px] text-[var(--pg-text-secondary)]">
                 <div>
-                  1. Static AST/Pattern Engine:{' '}
+                  1. Deterministic Static Analysis:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
-                    {analysisMode === 'ai-only' ? 'SKIPPED' : 'RUNNING (pg-static-ast-1.4.2)'}
+                    {submittingMode === 'ai-only'
+                      ? 'SKIPPED BY MODE'
+                      : 'INCLUDED IN REQUEST (pg-static-ast-1.4.2)'}
                   </strong>
                 </div>
                 <div>
-                  2. Gemini Semantic Engine:{' '}
+                  2. Gemini AI Semantic Analysis:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
-                    {analysisMode === 'static-only'
-                      ? 'SKIPPED'
-                      : 'RUNNING (gemini-3.1-flash-lite)'}
+                    {submittingMode === 'static-only'
+                      ? 'SKIPPED BY MODE'
+                      : 'INCLUDED IN REQUEST (gemini-3.1-flash-lite)'}
                   </strong>
                 </div>
                 <div>
-                  3. Location Verifier & Corroboration:{' '}
+                  3. Evidence Corroboration & Line Verification:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
-                    AWAITING STAGE COMPLETION
+                    INCLUDED IN REQUEST
                   </strong>
                 </div>
+              </div>
+              <div className="pt-1 border-t border-[var(--pg-border-subtle)] text-[10.5px] text-[var(--pg-text-muted)] leading-relaxed">
+                Telemetry Note: /api/review executes as a single HTTP request; exact per-stage
+                duration, retry count, and completion status are recorded once the response
+                returns.
               </div>
             </div>
           )}

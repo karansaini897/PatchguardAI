@@ -9,6 +9,7 @@ import {
   STATIC_ANALYZER_VERSION,
   validateAndNormalizeFindingLocation,
   verifyFindingLocationIntegrity,
+  verifyReviewFindingsIntegrity,
 } from './staticAnalyzer';
 import {
   computePrecisionRecall,
@@ -911,5 +912,108 @@ test('12. Phase 3 & 4 production readiness: API key placeholder rejection, secre
   }
 });
 
+test('13. Defensive workspace location validation (verifyReviewFindingsIntegrity & resolveTargetSourceFile) protects rendering and navigation', () => {
+  const [fileA, fileB] = ISOLATED_DEMO_REVIEW.files;
+  const validFindingA = ISOLATED_DEMO_REVIEW.findings.find(
+    (f) => f.location.fileId === fileA.id
+  )!;
+  const validFindingB = ISOLATED_DEMO_REVIEW.findings.find(
+    (f) => f.location.fileId === fileB.id
+  )!;
 
+  // 13a. Finding for fileB must never resolve against [fileA] (prevents cross-file highlighting in SourceViewer)
+  const resolvedAgainstWrongFile = resolveTargetSourceFile(
+    [fileA],
+    validFindingB.location.fileId,
+    validFindingB.location.filename
+  );
+  assert.equal(
+    resolvedAgainstWrongFile,
+    null,
+    'Finding belonging to fileB must not resolve when checked against [fileA]'
+  );
 
+  // 13b. Conflicting fileId vs filename must be rejected as null rather than guessing
+  const conflictedResolution = resolveTargetSourceFile(
+    [fileA, fileB],
+    fileA.id,
+    fileB.filename
+  );
+  assert.equal(
+    conflictedResolution,
+    null,
+    'Conflicting fileId and filename must return null and never guess a target file'
+  );
+
+  // 13c. Mixed batch in verifyReviewFindingsIntegrity:
+  // - validFindingA remains verified
+  // - outOfBoundsFinding (claiming isValidLocation: true on L99 of a 33-line file) is quarantined without clamping
+  // - staleSnippetFinding (claiming rawSnippet that does not match line 12) is quarantined as source_changed
+  // - wrongFileFinding (referencing a non-existent file) is quarantined as wrong_file
+  const outOfBoundsTampered: ReviewFinding = {
+    ...validFindingA,
+    id: 'tampered-oob',
+    confidence: 'high',
+    location: {
+      ...validFindingA.location,
+      startLine: 99,
+      endLine: 102,
+      isValidLocation: true, // Simulates corrupted/unverified stored state
+    },
+  };
+
+  const staleSnippetTampered: ReviewFinding = {
+    ...validFindingA,
+    id: 'tampered-snippet',
+    confidence: 'high',
+    location: {
+      ...validFindingA.location,
+      rawSnippet: 'const completelyDifferentCode = true;',
+      isValidLocation: true,
+    },
+  };
+
+  const wrongFileTampered: ReviewFinding = {
+    ...validFindingA,
+    id: 'tampered-wrong-file',
+    confidence: 'high',
+    location: {
+      ...validFindingA.location,
+      fileId: 'file-nonexistent',
+      filename: 'src/ledger/deletedModule.ts',
+      isValidLocation: true,
+    },
+  };
+
+  const batch = verifyReviewFindingsIntegrity(
+    [validFindingA, outOfBoundsTampered, staleSnippetTampered, wrongFileTampered],
+    [fileA, fileB]
+  );
+
+  assert.equal(batch.length, 4, 'All findings in the review are preserved');
+
+  // Valid finding remains untouched and verified
+  assert.equal(batch[0].id, validFindingA.id);
+  assert.equal(batch[0].location.isValidLocation, true);
+  assert.equal(batch[0].location.locationReason, 'verified');
+  assert.equal(batch[0].location.startLine, validFindingA.location.startLine);
+
+  // Out-of-bounds finding is quarantined without clamping startLine
+  assert.equal(batch[1].location.isValidLocation, false);
+  assert.equal(batch[1].location.locationReason, 'out_of_bounds');
+  assert.equal(batch[1].location.startLine, 99, 'Invalid line number must not be clamped to 33');
+  assert.equal(batch[1].location.rawSnippet, '');
+  assert.equal(batch[1].confidence, 'low');
+
+  // Stale snippet finding is quarantined as source_changed
+  assert.equal(batch[2].location.isValidLocation, false);
+  assert.equal(batch[2].location.locationReason, 'source_changed');
+  assert.equal(batch[2].location.rawSnippet, '');
+  assert.equal(batch[2].confidence, 'low');
+
+  // Wrong-file finding is quarantined as wrong_file
+  assert.equal(batch[3].location.isValidLocation, false);
+  assert.equal(batch[3].location.locationReason, 'wrong_file');
+  assert.equal(batch[3].location.rawSnippet, '');
+  assert.equal(batch[3].confidence, 'low');
+});
