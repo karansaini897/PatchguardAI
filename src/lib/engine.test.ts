@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeSourceContentHash,
+  deduplicateFindings,
   mergeAndCorroborateFindings,
   resolveTargetSourceFile,
   runStaticAnalysisOnFiles,
@@ -587,24 +588,32 @@ test('10. Static analysis rules accuracy, SQL injection CWE-89 classification, a
     assert.equal(sf.confidence, 'high');
   }
 
-  // 10b. Verify PG-SEC-001 negative cases: prose log strings and error messages with SQL words must NOT trigger false positives
+  // 10b. Verify PG-SEC-001 negative cases: unrelated English string interpolations, log strings, OS shell commands, and parameterized queries must NOT trigger false positives
   const negativeLogAndPlaceholderFile: SourceFileRecord = {
     id: 'file-neg-log',
     filename: 'src/services/auditLogger.ts',
     language: 'typescript',
     changeStatus: 'modified',
-    lineCount: 8,
+    lineCount: 12,
     content: [
-      'export function logAccountUpdate(accountId: string, tenantId: string) {',
+      'export async function logAccountUpdate(db: any, exec: any, accountId: string, tenantId: string, userName: string) {',
       '  const placeholderKey = "YOUR_API_KEY_HERE";',
+      '  const uiPrompt = `Please select an item from the menu for ${userName}`;',
+      '  const uiBanner = `Update the set of active widgets for ${tenantId}`;',
+      '  const shellCmd = `ls -la /var/log/payouts/${tenantId}`;',
+      '  exec(shellCmd);',
       '  console.error(`Failed to UPDATE account ${accountId} or DELETE FROM cache for ${tenantId}`);',
       '  throw new Error(`Cannot SELECT record FROM ledger where id = ${accountId}`);',
       '}',
     ].join('\n'),
     contentHash: computeSourceContentHash(
       [
-        'export function logAccountUpdate(accountId: string, tenantId: string) {',
+        'export async function logAccountUpdate(db: any, exec: any, accountId: string, tenantId: string, userName: string) {',
         '  const placeholderKey = "YOUR_API_KEY_HERE";',
+        '  const uiPrompt = `Please select an item from the menu for ${userName}`;',
+        '  const uiBanner = `Update the set of active widgets for ${tenantId}`;',
+        '  const shellCmd = `ls -la /var/log/payouts/${tenantId}`;',
+        '  exec(shellCmd);',
         '  console.error(`Failed to UPDATE account ${accountId} or DELETE FROM cache for ${tenantId}`);',
         '  throw new Error(`Cannot SELECT record FROM ledger where id = ${accountId}`);',
         '}',
@@ -616,10 +625,47 @@ test('10. Static analysis rules accuracy, SQL injection CWE-89 classification, a
   assert.equal(
     negFindings.length,
     0,
-    'Log statements, Error constructors, and placeholder keys must produce 0 false positives'
+    'Unrelated English interpolations ("Please select...from..."), OS commands, log statements, Error constructors, and placeholder keys must produce 0 false positives'
   );
 
-  // 10c. Verify all 5 curated evaluation suite test cases (positive defect suites eval-tc-01..04 and clean control eval-tc-05)
+  // 10c. Verify multi-line unsafe SQL template literal triggers exactly 1 PG-SEC-001 finding (no duplicate per-line hits)
+  const multilineUnsafeSqlFile: SourceFileRecord = {
+    id: 'file-multiline-sql',
+    filename: 'src/repos/multilineSql.ts',
+    language: 'typescript',
+    changeStatus: 'modified',
+    lineCount: 8,
+    content: [
+      'export async function queryByTenant(db: any, tenantId: string) {',
+      '  const sql = `',
+      '    SELECT id, balance_cents',
+      '    FROM merchant_accounts',
+      "    WHERE tenant_id = '${tenantId}'",
+      '  `;',
+      '  return db.query(sql);',
+      '}',
+    ].join('\n'),
+    contentHash: computeSourceContentHash(
+      [
+        'export async function queryByTenant(db: any, tenantId: string) {',
+        '  const sql = `',
+        '    SELECT id, balance_cents',
+        '    FROM merchant_accounts',
+        "    WHERE tenant_id = '${tenantId}'",
+        '  `;',
+        '  return db.query(sql);',
+        '}',
+      ].join('\n')
+    ),
+  };
+
+  const multilineSqlFindings = runStaticAnalysisOnFiles([multilineUnsafeSqlFile]);
+  assert.equal(multilineSqlFindings.length, 1, 'Multi-line SQL template literal must emit 1 finding without duplicate per-line hits');
+  assert.equal(multilineSqlFindings[0].staticCorroboration?.ruleId, 'PG-SEC-001');
+  assert.equal(multilineSqlFindings[0].location.startLine, 2);
+  assert.equal(multilineSqlFindings[0].location.endLine, 6);
+
+  // 10d. Verify all 5 curated evaluation suite test cases (positive defect suites eval-tc-01..04 and clean control eval-tc-05)
   for (const tc of INITIAL_EVALUATION_TEST_CASES) {
     const fileRecord: SourceFileRecord = {
       id: `tc-${tc.id}`,
@@ -649,7 +695,7 @@ test('10. Static analysis rules accuracy, SQL injection CWE-89 classification, a
     }
   }
 
-  // 10d. Verify explicit stage status distinction: static-only ('skipped') vs hybrid missing key ('skipped' + 'completed_with_warnings')
+  // 10e. Verify explicit stage status distinction: static-only ('skipped') vs hybrid missing key ('skipped' + 'completed_with_warnings')
   const staticOnlyRes = await executeReviewPipeline(
     {
       title: 'Static Only Mode Verification',
@@ -702,4 +748,64 @@ test('10. Static analysis rules accuracy, SQL injection CWE-89 classification, a
     assert.equal(stgAi.errorCode, 'MISSING_SERVER_CONFIG');
   }
 });
+
+test('11. Deduplication removes genuinely redundant findings while preserving distinct rules and distinct locations', () => {
+  const demoFindings = ISOLATED_DEMO_REVIEW.findings;
+  // 11a. In PR #418, PG-SEC-001 triggers at L12-13 and L22 (non-overlapping locations) -> both preserved
+  const sec001List = demoFindings.filter((f) => f.staticCorroboration?.ruleId === 'PG-SEC-001');
+  assert.equal(sec001List.length, 2);
+  assert.equal(sec001List[0].location.startLine, 12);
+  assert.equal(sec001List[1].location.startLine, 22);
+
+  // 11b. In PR #418, L20-23 triggers both PG-BND-003 (boundary) and PG-PERF-007 (performance) -> both preserved
+  const l20Findings = demoFindings.filter((f) => f.location.startLine === 20);
+  assert.equal(l20Findings.length, 2);
+  const l20Rules = l20Findings.map((f) => f.staticCorroboration?.ruleId).sort();
+  assert.deepEqual(l20Rules, ['PG-BND-003', 'PG-PERF-007']);
+
+  // 11c. Passing duplicate static findings for the same rule and overlapping lines deduplicates to 1
+  const duplicateStatic = [sec001List[0], { ...sec001List[0], id: 'dup-sec-001' }];
+  const dedupedStatic = deduplicateFindings(duplicateStatic);
+  assert.equal(dedupedStatic.length, 1, 'Genuinely redundant static findings for same rule & line must be deduplicated');
+
+  // 11d. Passing duplicate AI findings for the same file, category, and line range during corroboration consumes both duplicates
+  const parsedDuplicateAi = parseAndValidateAiFindings(
+    JSON.stringify([
+      {
+        title: 'SQL injection in lookupSql',
+        severity: 'critical',
+        category: 'security',
+        filename: 'src/ledger/payoutController.ts',
+        startLine: 12,
+        endLine: 13,
+        confidence: 'high',
+        explanation: 'First AI detection of SQL injection on L12.',
+        potentialImpact: 'Arbitrary database read.',
+        suggestedRemediation: 'Parameterize query.',
+      },
+      {
+        title: 'Redundant duplicate AI SQL injection on L12',
+        severity: 'high',
+        category: 'security',
+        filename: 'src/ledger/payoutController.ts',
+        startLine: 12,
+        endLine: 13,
+        confidence: 'medium',
+        explanation: 'Duplicate AI detection on the exact same lines and category.',
+        potentialImpact: 'Arbitrary database read.',
+        suggestedRemediation: 'Parameterize query.',
+      },
+    ]),
+    ISOLATED_DEMO_REVIEW.files
+  );
+
+  const merged = mergeAndCorroborateFindings([sec001List[0]], parsedDuplicateAi.findings);
+  assert.equal(
+    merged.length,
+    1,
+    'Duplicate AI findings on the same file, category, and line range must corroborate into a single finding'
+  );
+  assert.equal(merged[0].analysisSource, 'corroborated');
+});
+
 

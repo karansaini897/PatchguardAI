@@ -150,7 +150,7 @@ const STATIC_RULES: StaticRuleDefinition[] = [
       const hits: ReturnType<StaticRuleDefinition['matcher']> = [];
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (/^\s*(\/\/|#|--)/.test(line)) continue;
+        if (/^\s*(\/\/|#|--|\/\*|\*)/.test(line)) continue;
         // Exclude logging and error construction statements that mention SQL verbs in prose
         if (
           /\b(console\.(log|warn|error|info|debug)|logger\.(log|warn|error|info|debug)|throw\s+new\s+\w*Error)\s*\(/.test(
@@ -159,25 +159,44 @@ const STATIC_RULES: StaticRuleDefinition[] = [
         ) {
           continue;
         }
-        const hasSqlClauseStructure =
-          /\bSELECT\b.+\bFROM\b|\bUPDATE\b.+\bSET\b|\bDELETE\s+FROM\b|\bINSERT\s+INTO\b|\bWHERE\b.+\b(=|IN|LIKE)\b/i.test(
-            line
-          );
-        const hasInterpolation =
-          /\$\{[^}]+\}/.test(line) ||
-          /f["'][^"']*\{[^}]+\}/.test(line) ||
-          /["']\s*\+\s*[a-zA-Z0-9_.]+\s*(\+|;|$)/.test(line) ||
-          (/%s/.test(line) && /\.execute\s*\(\s*f["']/.test(line));
 
-        if (hasSqlClauseStructure && hasInterpolation) {
+        // Inspect single line, or a multi-line template literal window (up to 6 lines) if an unclosed backtick starts a SQL query
+        let windowText = line;
+        let windowEndIdx = i;
+        const backtickCount = (line.match(/`/g) || []).length;
+        if (backtickCount === 1) {
+          for (let k = i + 1; k < Math.min(lines.length, i + 6); k++) {
+            windowText += '\n' + lines[k];
+            windowEndIdx = k;
+            if (lines[k].includes('`')) break;
+          }
+        }
+
+        // Require actual SQL statement structure beginning inside a string literal,
+        // avoiding false positives on casual English prose like `Please select an item from ${list}`
+        const hasSqlQueryLiteral =
+          /(?:f?[`'"]\s*)(?:SELECT\s+[\w*,.\s()]+\s+FROM\s+[a-zA-Z0-9_."`]+|UPDATE\s+[a-zA-Z0-9_."`]+\s+SET\s+[a-zA-Z0-9_."`]+\s*=|DELETE\s+FROM\s+[a-zA-Z0-9_."`]+|INSERT\s+INTO\s+[a-zA-Z0-9_."`]+)/i.test(
+            windowText
+          );
+
+        const hasInterpolation =
+          /\$\{[^}]+\}/.test(windowText) ||
+          /f["'][^"']*\{[^}]+\}/.test(windowText) ||
+          /["']\s*\+\s*[a-zA-Z0-9_.]+\s*(\+|;|\)|$)/.test(windowText) ||
+          (/%s/.test(windowText) && /\.execute\s*\(\s*f["']/.test(windowText));
+
+        if (hasSqlQueryLiteral && hasInterpolation) {
           // Include the immediately following execution line only if it exists and executes this query variable
-          const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+          const nextLine = windowEndIdx + 1 < lines.length ? lines[windowEndIdx + 1] : '';
           const spansNextLine =
-            i + 1 < lines.length &&
+            windowEndIdx === i &&
+            windowEndIdx + 1 < lines.length &&
             /\b(query|execute|getBalance|raw)\s*\(/.test(nextLine);
+          const finalEndIdx = spansNextLine ? windowEndIdx + 1 : windowEndIdx;
+
           hits.push({
             startLine: i + 1,
-            endLine: spansNextLine ? i + 2 : i + 1,
+            endLine: finalEndIdx + 1,
             matchedPattern: line.trim(),
             explanation:
               'SQL statement string is constructed dynamically by interpolating or concatenating runtime variables directly into SQL query syntax rather than using bound parameters.',
@@ -188,6 +207,7 @@ const STATIC_RULES: StaticRuleDefinition[] = [
             remediationCode:
               '// Bind parameters separately from the SQL statement:\nawait db.query("SELECT * FROM accounts WHERE tenant_id = $1 AND status = $2", [tenantId, status]);',
           });
+          i = finalEndIdx;
         }
       }
       return hits;
@@ -597,6 +617,69 @@ export function verifyFindingLocationIntegrity(
   return revalidated;
 }
 
+/**
+ * Deduplicates genuinely redundant findings while preserving distinct, evidence-backed findings:
+ * - Preserves findings from the same rule when they occur at non-overlapping line ranges (e.g. L12-13 and L22).
+ * - Preserves findings at the same line range when they come from different static rules or defect categories (e.g. PG-BND-003 vs PG-PERF-007).
+ * - Deduplicates findings in the same file when they share the same static ruleId and overlapping lines,
+ *   or when uncorroborated AI findings share the same file, category, and overlapping lines.
+ */
+export function deduplicateFindings(findings: ReviewFinding[]): ReviewFinding[] {
+  const result: ReviewFinding[] = [];
+
+  for (const candidate of findings) {
+    const existingIdx = result.findIndex((existing) => {
+      if (existing.location.fileId !== candidate.location.fileId) return false;
+      if (existing.location.filename !== candidate.location.filename) return false;
+      if (!existing.location.isValidLocation || !candidate.location.isValidLocation) {
+        return (
+          existing.title.trim().toLowerCase() === candidate.title.trim().toLowerCase() &&
+          existing.location.startLine === candidate.location.startLine &&
+          existing.location.endLine === candidate.location.endLine
+        );
+      }
+
+      const linesOverlap =
+        existing.location.startLine <= candidate.location.endLine &&
+        existing.location.endLine >= candidate.location.startLine;
+      if (!linesOverlap) return false;
+
+      const existingRule = existing.staticCorroboration?.ruleId;
+      const candidateRule = candidate.staticCorroboration?.ruleId;
+
+      // If both findings carry static rule IDs, they are duplicates if and only if the rule ID is identical
+      if (existingRule && candidateRule) {
+        return existingRule === candidateRule;
+      }
+
+      // If neither carries a static rule ID (e.g. duplicate AI findings), deduplicate if same category on overlapping lines
+      if (!existingRule && !candidateRule) {
+        return existing.category === candidate.category;
+      }
+
+      // If one is corroborated/static and the other is an AI finding on the same category & overlapping lines
+      return existing.category === candidate.category;
+    });
+
+    if (existingIdx === -1) {
+      result.push(candidate);
+    } else {
+      const existing = result[existingIdx];
+      // Prefer corroborated > static-pattern > ai-gemini, or higher severity
+      const preferCandidate =
+        (candidate.analysisSource === 'corroborated' &&
+          existing.analysisSource !== 'corroborated') ||
+        (candidate.analysisSource === existing.analysisSource &&
+          compareSeverity(candidate.severity, existing.severity) < 0);
+      if (preferCandidate) {
+        result[existingIdx] = candidate;
+      }
+    }
+  }
+
+  return result;
+}
+
 export function runStaticAnalysisOnFiles(
   files: SourceFileRecord[],
   focusAreas?: FindingCategory[]
@@ -657,18 +740,20 @@ export function runStaticAnalysisOnFiles(
     }
   }
 
-  return findings;
+  return deduplicateFindings(findings);
 }
 
 export function mergeAndCorroborateFindings(
   staticFindings: ReviewFinding[],
   aiFindings: ReviewFinding[]
 ): ReviewFinding[] {
+  const dedupedStatic = deduplicateFindings(staticFindings);
+  const dedupedAi = deduplicateFindings(aiFindings);
   const merged: ReviewFinding[] = [];
   const consumedAiIds = new Set<string>();
 
-  for (const sf of staticFindings) {
-    const matchingAi = aiFindings.find((af) => {
+  for (const sf of dedupedStatic) {
+    const matchingAiList = dedupedAi.filter((af) => {
       if (consumedAiIds.has(af.id)) return false;
       if (af.location.fileId !== sf.location.fileId) return false;
       if (af.location.filename !== sf.location.filename) return false;
@@ -680,35 +765,38 @@ export function mergeAndCorroborateFindings(
       return (overlaps || lineDiff <= 3) && af.category === sf.category;
     });
 
-    if (matchingAi) {
-      consumedAiIds.add(matchingAi.id);
+    if (matchingAiList.length > 0) {
+      for (const ma of matchingAiList) {
+        consumedAiIds.add(ma.id);
+      }
+      const primaryAi = matchingAiList[0];
       merged.push({
-        ...matchingAi,
+        ...primaryAi,
         id: `fnd-corroborated-${sf.staticCorroboration?.ruleId.toLowerCase() || 'rule'}-${sf.location.startLine}`,
         severity:
-          compareSeverity(sf.severity, matchingAi.severity) <= 0
+          compareSeverity(sf.severity, primaryAi.severity) <= 0
             ? sf.severity
-            : matchingAi.severity,
+            : primaryAi.severity,
         analysisSource: 'corroborated',
         confidence: 'high',
         location: sf.location, // Preserve verified deterministic static location & contentHash
         uncertaintyNote:
           'Independently corroborated by both PatchGuard Static Analyzer and Gemini AI code reasoning.',
         staticCorroboration: sf.staticCorroboration,
-        remediationCode: matchingAi.remediationCode || sf.remediationCode,
+        remediationCode: primaryAi.remediationCode || sf.remediationCode,
       });
     } else {
       merged.push(sf);
     }
   }
 
-  for (const af of aiFindings) {
+  for (const af of dedupedAi) {
     if (!consumedAiIds.has(af.id)) {
       merged.push(af);
     }
   }
 
-  return sortFindingsBySeverity(merged);
+  return sortFindingsBySeverity(deduplicateFindings(merged));
 }
 
 const SEVERITY_ORDER: Record<SeverityLevel, number> = {
