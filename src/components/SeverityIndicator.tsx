@@ -77,34 +77,47 @@ export const SeverityLabel: React.FC<{
   );
 };
 
-export const FindingStatusLabel: React.FC<{ status: FindingStatus }> = ({ status }) => {
-  const map: Record<FindingStatus, { text: string; symbol: string; cls: string }> = {
+export const FindingStatusLabel: React.FC<{
+  status: FindingStatus;
+  compact?: boolean;
+}> = ({ status, compact = false }) => {
+  const map: Record<
+    FindingStatus,
+    { text: string; shortText: string; symbol: string; cls: string }
+  > = {
     unreviewed: {
       text: 'Unreviewed',
+      shortText: 'Unreviewed',
       symbol: '○',
       cls: 'text-[var(--pg-warning)]',
     },
     reviewed: {
       text: 'Reviewed',
+      shortText: 'Reviewed',
       symbol: '✓',
       cls: 'text-[var(--pg-success)]',
     },
     dismissed: {
       text: 'Dismissed (Not Proven Safe)',
+      shortText: 'Dismissed',
       symbol: '×',
       cls: 'text-[var(--pg-text-muted)]',
     },
     reopened: {
       text: 'Reopened',
+      shortText: 'Reopened',
       symbol: '↺',
       cls: 'text-[var(--pg-accent-text)]',
     },
   };
   const item = map[status];
   return (
-    <span className={`inline-flex items-center gap-1 font-mono text-xs whitespace-nowrap shrink-0 ${item.cls}`}>
+    <span
+      title={`Review status: ${item.text}`}
+      className={`inline-flex items-center gap-1 font-mono text-[11px] whitespace-nowrap shrink-0 ${item.cls}`}
+    >
       <span aria-hidden="true">{item.symbol}</span>
-      <span>{item.text}</span>
+      <span>{compact ? item.shortText : item.text}</span>
     </span>
   );
 };

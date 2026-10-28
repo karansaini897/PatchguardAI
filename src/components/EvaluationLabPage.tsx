@@ -268,78 +268,93 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
               NO EVALUATION RUNS EXECUTED IN CURRENT LEDGER
             </div>
             <p className="text-[var(--pg-text-secondary)] max-w-3xl leading-relaxed">
-              PatchGuard withholds precision, recall, and latency charts until test cases have been
+              PatchGuard withholds precision, recall, and latency metrics until test cases have been
               genuinely executed against the backend analysis pipeline. Click{' '}
               <strong>Execute All 5 Cases</strong> or run an individual test case below to compute
-              empirical metrics.
+              empirical benchmark scores.
             </p>
           </div>
-          <div className="font-mono text-[11px] text-[var(--pg-text-muted)] shrink-0">
-            0 / {testCases.length} cases executed
+          <div className="font-mono text-[11px] px-2.5 py-1 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-muted)] shrink-0">
+            ○ 0 / {testCases.length} cases executed
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] divide-y lg:divide-y-0 lg:divide-x divide-[var(--pg-border-default)] text-xs">
-          <div className="p-4 space-y-1">
-            <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--pg-border-default)] text-xs">
+          <div className="p-4 space-y-1 min-w-0">
+            <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-muted)]">
               EXECUTED TEST CASES
             </div>
             <div className="font-mono text-xl font-semibold text-[var(--pg-text-primary)] tabular-nums">
               {aggregateMetrics.executedCount} / {aggregateMetrics.totalCases}
             </div>
-            <div className="text-[11px] text-[var(--pg-text-secondary)]">
+            <div className="font-mono text-[11px] text-[var(--pg-text-primary)]">
               TP: {aggregateMetrics.totalTp} · FP: {aggregateMetrics.totalFp} · FN:{' '}
               {aggregateMetrics.totalFn}
             </div>
+            <div className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+              Benchmarks genuinely run against the live review pipeline.
+            </div>
           </div>
 
-          <div className="p-4 space-y-1">
-            <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+          <div className="p-4 space-y-1 min-w-0">
+            <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-muted)]">
               MEASURED PRECISION
             </div>
             <div className="font-mono text-xl font-semibold text-[var(--pg-success)] tabular-nums">
               {formatRatio(aggregateMetrics.precision, 'TP+FP=0')}
             </div>
-            <div className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+            <div className="font-mono text-[11px] text-[var(--pg-text-primary)]">
               TP / (TP + FP) = {aggregateMetrics.totalTp} / (
               {aggregateMetrics.totalTp + aggregateMetrics.totalFp})
             </div>
+            <div className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+              Share of reported findings that match a real ground-truth defect.
+            </div>
           </div>
 
-          <div className="p-4 space-y-1">
-            <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+          <div className="p-4 space-y-1 min-w-0">
+            <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-muted)]">
               MEASURED RECALL
             </div>
             <div className="font-mono text-xl font-semibold text-[var(--pg-info)] tabular-nums">
               {formatRatio(aggregateMetrics.recall, 'TP+FN=0')}
             </div>
-            <div className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+            <div className="font-mono text-[11px] text-[var(--pg-text-primary)]">
               TP / (TP + FN) = {aggregateMetrics.totalTp} / (
               {aggregateMetrics.totalTp + aggregateMetrics.totalFn})
             </div>
+            <div className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+              Share of known ground-truth defects successfully detected.
+            </div>
           </div>
 
-          <div className="p-4 space-y-1">
-            <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+          <div className="p-4 space-y-1 min-w-0">
+            <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-muted)]">
               HARMONIC F1 SCORE
             </div>
             <div className="font-mono text-xl font-semibold text-[var(--pg-text-primary)] tabular-nums">
               {aggregateMetrics.f1Score !== null ? aggregateMetrics.f1Score.toFixed(3) : 'N/A'}
             </div>
-            <div className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+            <div className="font-mono text-[11px] text-[var(--pg-text-primary)]">
               2 · (P · R) / (P + R)
+            </div>
+            <div className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+              Balanced accuracy combining false-positive and false-negative rates.
             </div>
           </div>
 
-          <div className="p-4 space-y-1">
-            <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+          <div className="p-4 space-y-1 min-w-0">
+            <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-muted)]">
               MEAN REVIEW LATENCY
             </div>
             <div className="font-mono text-xl font-semibold text-[var(--pg-text-primary)] tabular-nums">
               {aggregateMetrics.avgLatencyMs}ms
             </div>
-            <div className="text-[11px] text-[var(--pg-text-secondary)]">
-              Measured across {aggregateMetrics.executedCount} live request(s)
+            <div className="font-mono text-[11px] text-[var(--pg-text-primary)]">
+              {aggregateMetrics.executedCount} live request(s)
+            </div>
+            <div className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+              Average end-to-end execution duration per benchmark case.
             </div>
           </div>
         </div>
@@ -359,8 +374,8 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                 onClick={() => setSelectedSuiteId('all')}
                 className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between cursor-pointer ${
                   selectedSuiteId === 'all'
-                    ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold'
-                    : 'text-[var(--pg-text-secondary)] hover:bg-[var(--pg-bg-workspace)]'
+                    ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold border-l-[3px] border-l-[var(--pg-accent)]'
+                    : 'text-[var(--pg-text-secondary)] hover:bg-[var(--pg-bg-workspace)] border-l-[3px] border-l-transparent'
                 }`}
               >
                 <span>All Curated Suites</span>
@@ -373,8 +388,8 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                   onClick={() => setSelectedSuiteId(s.id)}
                   className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer ${
                     selectedSuiteId === s.id
-                      ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold'
-                      : 'text-[var(--pg-text-secondary)] hover:bg-[var(--pg-bg-workspace)]'
+                      ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold border-l-[3px] border-l-[var(--pg-accent)]'
+                      : 'text-[var(--pg-text-secondary)] hover:bg-[var(--pg-bg-workspace)] border-l-[3px] border-l-transparent'
                   }`}
                 >
                   <span className="truncate">{s.name}</span>
@@ -453,34 +468,40 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                       setSelectedCaseId(tc.id);
                     }
                   }}
-                  className={`p-3.5 transition-colors cursor-pointer ${
+                  className={`p-3.5 transition-colors cursor-pointer border-l-[3px] ${
                     isSelected
-                      ? 'bg-[var(--pg-bg-elevated)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
-                      : 'bg-[var(--pg-bg-surface)] hover:bg-[var(--pg-bg-workspace)]'
+                      ? 'bg-[var(--pg-bg-elevated)] border-l-[var(--pg-accent)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
+                      : 'bg-[var(--pg-bg-surface)] border-l-transparent hover:bg-[var(--pg-bg-workspace)]'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-1 font-mono text-[11px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1 font-mono text-[11px]">
                     <span className="text-[var(--pg-info)]">
                       {tc.id} · {tc.language.toUpperCase()} · {tc.category}
                     </span>
-                    {!run ? (
-                      <span className="text-[var(--pg-text-muted)]">○ UNEXECUTED</span>
+                    {isRunning ? (
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-accent-text)] font-semibold">
+                        ⋯ RUNNING
+                      </span>
+                    ) : !run ? (
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] text-[var(--pg-text-muted)]">
+                        ○ UNEXECUTED — NOT RUN
+                      </span>
                     ) : run.status === 'failed' ? (
-                      <span className="text-[var(--pg-danger)] font-semibold">
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-danger-subtle)] border border-[var(--pg-border-default)] text-[var(--pg-danger)] font-semibold">
                         ✕ EXECUTION FAILED
                       </span>
                     ) : matchedAllExpectations ? (
-                      <span className="text-[var(--pg-success)] font-semibold">
-                        ✓ MATCHED EXPECTATIONS
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-success-subtle)] border border-[var(--pg-border-default)] text-[var(--pg-success)] font-semibold">
+                        ✓ PASS · MATCHED EXPECTATIONS
                       </span>
                     ) : (
-                      <span className="text-[var(--pg-warning)] font-semibold">
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] border border-[var(--pg-border-default)] text-[var(--pg-warning)] font-semibold">
                         △ DISCREPANCY (FP:{run.falsePositives} / FN:{run.falseNegatives})
                       </span>
                     )}
                   </div>
 
-                  <div className="text-xs font-semibold text-[var(--pg-text-primary)] mb-1">
+                  <div className="text-[13px] font-semibold text-[var(--pg-text-primary)] mb-1 break-words leading-snug">
                     {tc.title}
                   </div>
 
@@ -499,7 +520,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                         setSelectedCaseId(tc.id);
                         handleExecuteCase(tc);
                       }}
-                      className="px-2.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] disabled:opacity-50 cursor-pointer"
+                      className="px-2.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] disabled:opacity-50 cursor-pointer shrink-0"
                     >
                       {isRunning ? 'Running...' : run ? 'Re-Run Case' : 'Run Case'}
                     </button>
@@ -524,17 +545,61 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
             </div>
           ) : (
             <div className="p-4 space-y-4 text-xs">
-              <div>
-                <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
+              <div className="min-w-0">
+                <div className="font-mono text-[11px] text-[var(--pg-text-muted)] break-all">
                   {selectedCase.suiteName} · {selectedCase.filename}
                 </div>
-                <h2 className="text-sm font-semibold text-[var(--pg-text-primary)] mt-0.5">
+                <h2 className="text-sm font-semibold text-[var(--pg-text-primary)] mt-0.5 break-words">
                   {selectedCase.title}
                 </h2>
-                <p className="text-[var(--pg-text-secondary)] mt-1 leading-relaxed">
+                <p className="text-[var(--pg-text-secondary)] mt-1 leading-relaxed break-words">
                   {selectedCase.description}
                 </p>
               </div>
+
+              {/* Expected vs. Actual Comparison Summary Grid (when executed) */}
+              {selectedCase.lastRunResult && (
+                <div className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] p-3 space-y-2">
+                  <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-secondary)] flex items-center justify-between gap-2">
+                    <span>EXPECTED VS. ACTUAL COMPARISON</span>
+                    <span className="text-[var(--pg-text-muted)] tabular-nums">
+                      {selectedCase.lastRunResult.durationMs}ms
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 text-center font-mono text-[11px]">
+                    <div className="p-1.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-subtle)]">
+                      <div className="text-[10px] text-[var(--pg-text-muted)]">EXPECTED</div>
+                      <div className="text-sm font-semibold text-[var(--pg-text-primary)] tabular-nums">
+                        {selectedCase.expectedDefects.length}
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-subtle)]">
+                      <div className="text-[10px] text-[var(--pg-text-muted)]">DETECTED</div>
+                      <div className="text-sm font-semibold text-[var(--pg-text-primary)] tabular-nums">
+                        {selectedCase.lastRunResult.detectedFindings.length}
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-subtle)]">
+                      <div className="text-[10px] text-[var(--pg-success)]">TP</div>
+                      <div className="text-sm font-semibold text-[var(--pg-success)] tabular-nums">
+                        {selectedCase.lastRunResult.truePositives}
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-subtle)]">
+                      <div className="text-[10px] text-[var(--pg-warning)]">FP</div>
+                      <div className="text-sm font-semibold text-[var(--pg-warning)] tabular-nums">
+                        {selectedCase.lastRunResult.falsePositives}
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-subtle)]">
+                      <div className="text-[10px] text-[var(--pg-danger)]">FN</div>
+                      <div className="text-sm font-semibold text-[var(--pg-danger)] tabular-nums">
+                        {selectedCase.lastRunResult.falseNegatives}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Source Code Preview */}
               <div className="space-y-1">
@@ -569,25 +634,27 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                         key={exp.id}
                         className="p-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-1"
                       >
-                        <div className="flex items-center justify-between font-mono text-[11px]">
+                        <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
                           <SeverityLabel severity={exp.minSeverity} compact />
                           <span>
                             L{exp.startLine}–L{exp.endLine} · {exp.category}
                           </span>
                         </div>
-                        <div className="font-semibold text-[var(--pg-text-primary)]">
+                        <div className="font-semibold text-[var(--pg-text-primary)] break-words">
                           {exp.title}
                         </div>
-                        <div className="text-[var(--pg-text-secondary)]">{exp.rationale}</div>
+                        <div className="text-[var(--pg-text-secondary)] break-words">
+                          {exp.rationale}
+                        </div>
                         {selectedCase.lastRunResult && (
                           <div className="pt-1 font-mono text-[11px]">
                             {matchedPair ? (
-                              <span className="text-[var(--pg-success)]">
+                              <span className="text-[var(--pg-success)] font-semibold">
                                 ✓ Detected (Matched finding {matchedPair.findingId}, ΔL=
                                 {matchedPair.lineDelta})
                               </span>
                             ) : (
-                              <span className="text-[var(--pg-danger)]">
+                              <span className="text-[var(--pg-danger)] font-semibold">
                                 ✕ Missed (False Negative)
                               </span>
                             )}
@@ -607,7 +674,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                 {!selectedCase.lastRunResult ? (
                   <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-2">
                     <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
-                      Status: Unexecuted
+                      Status: ○ Unexecuted (Not Run)
                     </div>
                     <p className="text-[var(--pg-text-secondary)]">
                       Run this test case to measure actual findings, precision, recall, and latency.
@@ -624,17 +691,12 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                 ) : (
                   <div className="space-y-2.5">
                     <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-2 font-mono text-[11px]">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <ReviewStatusLabel status={selectedCase.lastRunResult.status} />
                         <span className="text-[var(--pg-text-muted)] tabular-nums">
                           {selectedCase.lastRunResult.durationMs}ms · Req:{' '}
                           {selectedCase.lastRunResult.requestId}
                         </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 pt-1 text-[var(--pg-text-primary)] tabular-nums">
-                        <div>TP: {selectedCase.lastRunResult.truePositives}</div>
-                        <div>FP: {selectedCase.lastRunResult.falsePositives}</div>
-                        <div>FN: {selectedCase.lastRunResult.falseNegatives}</div>
                       </div>
                       <div className="text-[var(--pg-text-secondary)]">
                         Precision:{' '}
@@ -648,12 +710,18 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                     </div>
 
                     {selectedCase.lastRunResult.errorDetails && (
-                      <div className="p-2.5 bg-[var(--pg-danger-subtle)] border border-[var(--pg-border-default)] font-mono text-[11px] space-y-1">
-                        <div className="font-semibold text-[var(--pg-danger)]">
-                          [{selectedCase.lastRunResult.errorDetails.category}]{' '}
+                      <div className="p-3 bg-[var(--pg-danger-subtle)] border border-[var(--pg-border-default)] font-mono text-[11px] space-y-1.5">
+                        <div className="font-semibold text-[var(--pg-danger)] break-words">
+                          ✕ [{selectedCase.lastRunResult.errorDetails.category}]{' '}
                           {selectedCase.lastRunResult.errorDetails.message}
                         </div>
-                        <div className="text-[var(--pg-text-secondary)]">
+                        {selectedCase.lastRunResult.errorDetails.technicalDetail && (
+                          <div className="text-[var(--pg-text-secondary)] break-words">
+                            Technical Detail:{' '}
+                            {selectedCase.lastRunResult.errorDetails.technicalDetail}
+                          </div>
+                        )}
+                        <div className="text-[var(--pg-text-primary)] break-words">
                           Remediation: {selectedCase.lastRunResult.errorDetails.remediationStep}
                         </div>
                       </div>
@@ -678,7 +746,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                               key={f.id}
                               className="p-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-1 font-mono text-[11px]"
                             >
-                              <div className="flex items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
                                 <SeverityLabel severity={f.severity} compact />
                                 {isFp ? (
                                   <span className="text-[var(--pg-warning)] font-semibold">
@@ -690,7 +758,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                                   </span>
                                 )}
                               </div>
-                              <div className="font-sans font-semibold text-[var(--pg-text-primary)]">
+                              <div className="font-sans font-semibold text-[var(--pg-text-primary)] break-words">
                                 {f.title}
                               </div>
                               <div className="text-[var(--pg-text-muted)] tabular-nums">

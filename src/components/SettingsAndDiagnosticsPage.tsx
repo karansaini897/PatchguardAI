@@ -80,6 +80,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [confirmClearReviews, setConfirmClearReviews] = useState<boolean>(false);
   const [expandedDiagnosticId, setExpandedDiagnosticId] = useState<string | null>(null);
+  const [diagnosticsFilter, setDiagnosticsFilter] = useState<'all' | 'issues'>('all');
 
   useEffect(() => {
     if (!confirmClearReviews) return;
@@ -135,11 +136,60 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
     URL.revokeObjectURL(url);
   };
 
+  const actionableAlerts: Array<{
+    severity: 'danger' | 'warning';
+    title: string;
+    remediation: string;
+  }> = [];
+
+  if (health) {
+    if (!health.backendReachable) {
+      actionableAlerts.push({
+        severity: 'danger',
+        title: 'Express API Backend (/api/health) Unreachable',
+        remediation:
+          'Verify that server.ts is running on port 3000 and refresh system status before submitting new reviews.',
+      });
+    }
+    if (!health.aiProviderConfigured) {
+      actionableAlerts.push({
+        severity: 'warning',
+        title: 'AI Model Credentials Not Configured in Server Environment',
+        remediation:
+          'Configure GEMINI_API_KEY on the server to enable AI reasoning stages, or run reviews in Deterministic Static Analyzer mode.',
+      });
+    } else if (health.aiConnectivityState === 'failed') {
+      actionableAlerts.push({
+        severity: 'warning',
+        title: 'Live AI Model Connectivity Probe Failed',
+        remediation:
+          health.aiConnectivityMessage ||
+          'Check upstream Gemini API quota/availability or run reviews in Hybrid / Static-Only mode.',
+      });
+    }
+    if (!health.persistenceHealthy) {
+      actionableAlerts.push({
+        severity: 'warning',
+        title: 'Browser localStorage Unavailable — Operating in Memory Fallback',
+        remediation:
+          'Export your reviews as JSON before closing this tab so review artifacts are not lost.',
+      });
+    }
+  }
+
+  const issueDiagnosticsCount = diagnostics.filter(
+    (d) => d.status === 'failed' || d.status === 'warning'
+  ).length;
+  const filteredDiagnostics =
+    diagnosticsFilter === 'issues'
+      ? diagnostics.filter((d) => d.status === 'failed' || d.status === 'warning')
+      : diagnostics;
+
   return (
-    <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-6 space-y-8">
+    <div className="max-w-[1360px] w-full mx-auto px-3 sm:px-6 py-6 space-y-8 overflow-x-hidden">
       {/* Page Header */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <div className="font-mono text-xs text-[var(--pg-text-muted)]">
             SYSTEM OBSERVABILITY, DIAGNOSTICS & WORKSPACE SETTINGS
           </div>
@@ -150,15 +200,58 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
         <button
           type="button"
           onClick={onRefreshHealth}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] cursor-pointer self-start sm:self-auto shrink-0"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           <span>Refresh System Status</span>
         </button>
       </div>
 
+      {/* Actionable Subsystem Alerts (Prioritized when any subsystem is degraded) */}
+      {actionableAlerts.length > 0 && (
+        <section
+          aria-label="Actionable subsystem alerts"
+          className="space-y-2 min-w-0"
+        >
+          {actionableAlerts.map((alert, idx) => (
+            <div
+              key={idx}
+              role="alert"
+              className={`p-3.5 border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
+                alert.severity === 'danger'
+                  ? 'bg-[var(--pg-danger-subtle)] border-[var(--pg-border-default)]'
+                  : 'bg-[var(--pg-warning-subtle)] border-[var(--pg-border-default)]'
+              }`}
+            >
+              <div className="space-y-0.5 min-w-0">
+                <div
+                  className={`font-mono font-semibold break-words ${
+                    alert.severity === 'danger'
+                      ? 'text-[var(--pg-danger)]'
+                      : 'text-[var(--pg-warning)]'
+                  }`}
+                >
+                  {alert.severity === 'danger' ? '✕ ACTIONABLE FAILURE: ' : '△ SUBSYSTEM WARNING: '}
+                  {alert.title}
+                </div>
+                <div className="text-[var(--pg-text-secondary)] break-words">
+                  {alert.remediation}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onRefreshHealth}
+                className="px-2.5 py-1 font-mono text-[11px] bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] self-start sm:self-auto shrink-0 cursor-pointer"
+              >
+                Re-Verify Status
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
       {/* Section 10: Verifiable System Health Matrix */}
-      <section aria-label="Verifiable system health matrix" className="space-y-3">
+      <section aria-label="Verifiable system health matrix" className="space-y-3 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
             01 · Verifiable Subsystem Health (Configuration vs. Live Connectivity)
@@ -170,7 +263,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] divide-y md:divide-y-0 md:divide-x divide-[var(--pg-border-default)] text-xs">
           {/* 1. Backend Reachability */}
-          <div className="p-4 space-y-1.5">
+          <div className="p-4 space-y-1.5 min-w-0">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
               EXPRESS BACKEND (/api/health)
             </div>
@@ -189,13 +282,13 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
           </div>
 
           {/* 2. AI Provider Configuration vs Connectivity */}
-          <div className="p-4 space-y-2">
+          <div className="p-4 space-y-2 min-w-0">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
               AI PROVIDER ({health?.aiModelId || 'gemini-3.1-flash-lite'})
             </div>
-            <div className="font-mono text-xs space-y-0.5">
-              <div>
-                Key Configured:{' '}
+            <div className="font-mono text-[11px] space-y-1 bg-[var(--pg-bg-workspace)] p-2 border border-[var(--pg-border-subtle)]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[var(--pg-text-secondary)]">1. Credential Presence:</span>
                 <strong
                   className={
                     health?.aiProviderConfigured
@@ -203,11 +296,11 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                       : 'text-[var(--pg-warning)]'
                   }
                 >
-                  {health?.aiProviderConfigured ? 'YES (Server Env)' : 'NO'}
+                  {health?.aiProviderConfigured ? '✓ YES (Server Env)' : '△ MISSING'}
                 </strong>
               </div>
-              <div>
-                Live Connectivity:{' '}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[var(--pg-text-secondary)]">2. Live Connectivity:</span>
                 <strong
                   className={
                     health?.aiConnectivityState === 'verified'
@@ -221,7 +314,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                     ? '✓ VERIFIED'
                     : health?.aiConnectivityState === 'failed'
                     ? '✕ FAILED'
-                    : '○ UNVERIFIED'}
+                    : '○ NOT PROBED'}
                 </strong>
               </div>
             </div>
@@ -236,7 +329,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
           </div>
 
           {/* 3. Static Analysis Engine */}
-          <div className="p-4 space-y-1.5">
+          <div className="p-4 space-y-1.5 min-w-0">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
               STATIC ANALYSIS ENGINE
             </div>
@@ -249,7 +342,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
           </div>
 
           {/* 4. Persistence Adapter */}
-          <div className="p-4 space-y-1.5">
+          <div className="p-4 space-y-1.5 min-w-0">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
               PERSISTENCE ADAPTER
             </div>
@@ -271,7 +364,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
         {(probeMessage || health?.aiConnectivityMessage) && (
           <div
             role="status"
-            className={`px-4 py-2.5 border font-mono text-xs ${
+            className={`px-4 py-2.5 border font-mono text-xs break-words ${
               health?.aiConnectivityState === 'verified'
                 ? 'bg-[var(--pg-success-subtle)] border-[var(--pg-border-default)] text-[var(--pg-success)]'
                 : health?.aiConnectivityState === 'failed'
@@ -296,7 +389,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
       {/* Two-Column Split: Theme & Storage Settings (5 cols) | Failure State Verification Harness (7 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left 5 Columns: Visual Theme & Persistence Management */}
-        <section className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-5 space-y-6 text-xs">
+        <section className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-5 space-y-6 text-xs min-w-0">
           <div className="space-y-2">
             <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-secondary)]">
               02 · VISUAL THEME & SURFACE HIERARCHY
@@ -305,7 +398,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
               Select between the default dark-first Deep Graphite workspace and the independently
               calibrated Daylight Editorial theme. Selection persists in browser storage.
             </p>
-            <div className="grid grid-cols-2 gap-2.5 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => onChangeTheme('dark')}
@@ -397,7 +490,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
         </section>
 
         {/* Right 7 Columns: Section 10.2 Deterministic Failure-State Verification Harness */}
-        <section className="lg:col-span-7 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-5 space-y-4 text-xs">
+        <section className="lg:col-span-7 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-5 space-y-4 text-xs min-w-0">
           <div className="space-y-1">
             <div className="font-mono text-[11px] font-semibold text-[var(--pg-text-secondary)]">
               04 · FAILURE-STATE DIAGNOSTIC VERIFICATION HARNESS
@@ -435,17 +528,17 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
               aria-label="Simulated failure diagnostic result"
               className="p-3.5 bg-[var(--pg-danger-subtle)] border border-[var(--pg-border-default)] space-y-1.5 font-mono text-[11px]"
             >
-              <div className="flex items-center justify-between text-[var(--pg-danger)] font-semibold">
-                <span>VERIFIED FAILURE RESPONSE · {simulatedErrorResult.category}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[var(--pg-danger)] font-semibold">
+                <span>✕ VERIFIED FAILURE RESPONSE · {simulatedErrorResult.category}</span>
                 <span>Req: {simulatedErrorResult.requestId}</span>
               </div>
-              <div className="text-[var(--pg-text-primary)] font-sans text-xs font-semibold">
+              <div className="text-[var(--pg-text-primary)] font-sans text-xs font-semibold break-words">
                 {simulatedErrorResult.message}
               </div>
-              <div className="text-[var(--pg-text-secondary)]">
+              <div className="text-[var(--pg-text-secondary)] break-words">
                 Technical Detail: {simulatedErrorResult.technicalDetail}
               </div>
-              <div className="text-[var(--pg-info)]">
+              <div className="text-[var(--pg-info)] break-words">
                 Next Step: {simulatedErrorResult.remediationStep} (Retryable:{' '}
                 {simulatedErrorResult.retryable ? 'Yes' : 'No'})
               </div>
@@ -455,32 +548,66 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
       </div>
 
       {/* Section 10.1 Diagnostics Details Table */}
-      <section className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]">
-        <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex flex-wrap items-center justify-between gap-2">
+      <section className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] min-w-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
               05 · Sanitized Request & Analysis Diagnostics Ledger ({diagnostics.length})
             </h2>
             <p className="text-xs text-[var(--pg-text-secondary)]">
               Records request identifiers, analysis stages, durations, and normalized error
-              categories. Click any request ID to expand untruncated diagnostic details.
+              categories. Click any request ID or summary to expand untruncated diagnostic details.
             </p>
           </div>
-          {diagnostics.length > 0 && (
-            <button
-              type="button"
-              onClick={onClearDiagnostics}
-              className="px-2.5 py-1 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              role="group"
+              aria-label="Filter diagnostic events"
+              className="inline-flex border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] font-mono text-[11px]"
             >
-              Clear Diagnostics Log
-            </button>
-          )}
+              <button
+                type="button"
+                aria-pressed={diagnosticsFilter === 'all'}
+                onClick={() => setDiagnosticsFilter('all')}
+                className={`px-2.5 py-1 cursor-pointer ${
+                  diagnosticsFilter === 'all'
+                    ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold'
+                    : 'text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
+                }`}
+              >
+                All Events ({diagnostics.length})
+              </button>
+              <button
+                type="button"
+                aria-pressed={diagnosticsFilter === 'issues'}
+                onClick={() => setDiagnosticsFilter('issues')}
+                className={`px-2.5 py-1 border-l border-[var(--pg-border-default)] cursor-pointer ${
+                  diagnosticsFilter === 'issues'
+                    ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-warning)] font-semibold'
+                    : 'text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
+                }`}
+              >
+                Warnings & Failures ({issueDiagnosticsCount})
+              </button>
+            </div>
+
+            {diagnostics.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearDiagnostics}
+                className="px-2.5 py-1 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+              >
+                Clear Diagnostics Log
+              </button>
+            )}
+          </div>
         </div>
 
-        {diagnostics.length === 0 ? (
+        {filteredDiagnostics.length === 0 ? (
           <div className="p-6 text-xs text-[var(--pg-text-muted)] font-mono">
-            No API requests recorded in this session yet. Submit a review or run a health probe to
-            populate diagnostic telemetry.
+            {diagnostics.length === 0
+              ? 'No API requests recorded in this session yet. Submit a review or run a health probe to populate diagnostic telemetry.'
+              : 'No warnings or failed diagnostic events recorded in the current ledger.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -497,7 +624,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--pg-border-subtle)] text-[11px]">
-                {diagnostics.map((d) => {
+                {filteredDiagnostics.map((d) => {
                   const isExpanded = expandedDiagnosticId === d.id;
                   return (
                     <React.Fragment key={d.id}>
@@ -515,6 +642,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                             title="Click to expand full untruncated diagnostic payload"
                             className="text-[var(--pg-info)] hover:underline cursor-pointer"
                           >
+                            {isExpanded ? '▾ ' : '▸ '}
                             {d.requestId}
                           </button>
                         </td>
@@ -530,10 +658,15 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                               d.status === 'succeeded'
                                 ? 'text-[var(--pg-success)]'
                                 : d.status === 'warning'
-                                ? 'text-[var(--pg-warning)]'
-                                : 'text-[var(--pg-danger)]'
+                                ? 'text-[var(--pg-warning)] font-semibold'
+                                : 'text-[var(--pg-danger)] font-semibold'
                             }
                           >
+                            {d.status === 'succeeded'
+                              ? '✓ '
+                              : d.status === 'warning'
+                              ? '△ '
+                              : '✕ '}
                             {d.status.toUpperCase()} (HTTP {d.statusCode})
                           </span>
                         </td>
@@ -557,7 +690,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                               {d.endpoint})
                             </div>
                             {d.errorCategory && (
-                              <div className="text-[var(--pg-warning)]">
+                              <div className="text-[var(--pg-warning)] font-semibold">
                                 Normalized Error Category: {d.errorCategory} (HTTP {d.statusCode})
                               </div>
                             )}

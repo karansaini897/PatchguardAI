@@ -101,6 +101,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
 
   // Mobile/Tablet active sub-pane ('source' | 'findings' | 'evidence')
   const [mobilePane, setMobilePane] = useState<'source' | 'findings' | 'evidence'>('findings');
+  const [showMobileFilters, setShowMobileFilters] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedRemediationId, setCopiedRemediationId] = useState<string | null>(null);
   const [liveStatusAnnouncement, setLiveStatusAnnouncement] = useState<string>('');
@@ -121,11 +122,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       return;
     }
 
-    const hasDegradedStage =
-      review.status === 'completed_with_warnings' ||
-      review.status === 'failed' ||
-      review.stages.some((s) => s.status === 'failed' || s.status === 'warning');
-    setShowStagesPanel(hasDegradedStage);
+    setShowStagesPanel(false);
 
     const targetFinding =
       (initialSelectedFindingId &&
@@ -575,22 +572,22 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       )}
 
       {/* Workspace Summary Strip */}
-      <div className="px-4 py-2.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-4">
+      <div className="px-3 sm:px-4 py-2 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1
-              className="text-sm font-semibold text-[var(--pg-text-primary)] truncate"
+              className="text-sm font-semibold text-[var(--pg-text-primary)] truncate max-w-full"
               title={review.title}
             >
               {review.title}
             </h1>
             <ReviewStatusLabel status={review.status} />
-            <span className="font-mono text-xs text-[var(--pg-text-muted)] tabular-nums">
-              ID: {review.id} · {review.durationMs}ms · {review.modelUsed}
+            <span className="font-mono text-[11px] text-[var(--pg-text-muted)] tabular-nums">
+              {review.id} · {review.durationMs}ms · {review.modelUsed}
             </span>
           </div>
           <p
-            className="text-xs text-[var(--pg-text-secondary)] truncate mt-0.5"
+            className="hidden sm:block text-xs text-[var(--pg-text-secondary)] truncate mt-0.5"
             title={review.objective}
           >
             Objective: {review.objective}
@@ -717,16 +714,16 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         </section>
       )}
 
-      {/* Mobile / Tablet Sub-Pane Switcher (< 1024px) */}
-      <div className="lg:hidden border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)]">
+      {/* Mobile / Tablet Sticky Sub-Pane Switcher (< 1024px) */}
+      <div className="lg:hidden sticky top-0 z-20 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)]">
         <div className="flex">
           <button
             type="button"
             onClick={() => setMobilePane('source')}
-            className={`flex-1 py-2 text-xs font-mono border-b-2 cursor-pointer ${
+            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
               mobilePane === 'source'
-                ? 'border-[var(--pg-accent)] text-[var(--pg-text-primary)] font-semibold'
-                : 'border-transparent text-[var(--pg-text-secondary)]'
+                ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
+                : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
             A. Source ({review.files.length})
@@ -734,10 +731,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setMobilePane('findings')}
-            className={`flex-1 py-2 text-xs font-mono border-b-2 cursor-pointer ${
+            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
               mobilePane === 'findings'
-                ? 'border-[var(--pg-accent)] text-[var(--pg-text-primary)] font-semibold'
-                : 'border-transparent text-[var(--pg-text-secondary)]'
+                ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
+                : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
             B. Findings ({filteredFindings.length})
@@ -745,10 +742,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setMobilePane('evidence')}
-            className={`flex-1 py-2 text-xs font-mono border-b-2 cursor-pointer ${
+            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
               mobilePane === 'evidence'
-                ? 'border-[var(--pg-accent)] text-[var(--pg-text-primary)] font-semibold'
-                : 'border-transparent text-[var(--pg-text-secondary)]'
+                ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
+                : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
             C. Evidence{' '}
@@ -758,7 +755,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           </button>
         </div>
 
-        {/* Compact Active Finding Context Bar on Mobile/Tablet */}
+        {/* Compact Active Finding & File Context Bar on Mobile/Tablet */}
         {selectedFinding && (
           <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-t border-[var(--pg-border-subtle)] flex items-center justify-between gap-2 text-[11px] font-mono">
             <div className="flex items-center gap-1.5 min-w-0 truncate">
@@ -774,7 +771,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => handleNavigateToFindingSource(selectedFinding)}
-                    className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
+                    className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] cursor-pointer"
                   >
                     View L{selectedFinding.location.startLine}
                   </button>
@@ -785,7 +782,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   onClick={() => setMobilePane('evidence')}
                   className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
                 >
-                  Remediation
+                  Evidence
                 </button>
               )}
             </div>
@@ -958,7 +955,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           }`}
         >
           {/* Filter & Search Toolbar */}
-          <div className="p-3 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] space-y-2.5">
+          <div className="p-2.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] space-y-2 shrink-0">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 font-mono text-xs font-semibold text-[var(--pg-text-primary)]">
                 <Filter className="w-3.5 h-3.5 text-[var(--pg-text-muted)]" />
@@ -973,14 +970,22 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 >
                   J/K or ↑↓ nav
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setShowMobileFilters((prev) => !prev)}
+                  aria-expanded={showMobileFilters || hasActiveFilters}
+                  className="sm:hidden inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] cursor-pointer"
+                >
+                  <span>{showMobileFilters || hasActiveFilters ? 'Hide Facets' : 'Facets (6)'}</span>
+                </button>
                 {hasActiveFilters && (
                   <button
                     type="button"
                     onClick={resetAllFilters}
-                    className="inline-flex items-center gap-1 text-xs font-mono text-[var(--pg-info)] hover:underline cursor-pointer"
+                    className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--pg-info)] hover:underline cursor-pointer"
                   >
                     <RotateCcw className="w-3 h-3" />
-                    <span>Reset Filters</span>
+                    <span>Reset</span>
                   </button>
                 )}
               </div>
@@ -995,19 +1000,23 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 placeholder="Filter by title, rule ID (e.g. PG-SEC-001), or file..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] placeholder:text-[var(--pg-text-muted)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="w-full pl-8 pr-2.5 py-1 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] placeholder:text-[var(--pg-text-muted)] focus:outline-none focus:border-[var(--pg-accent)]"
               />
             </div>
 
             {/* 6 Dedicated Filter Selectors (Severity, Category, Status, Engine Source, File, Confidence) */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs font-mono">
+            <div
+              className={`${
+                showMobileFilters || hasActiveFilters ? 'grid' : 'hidden sm:grid'
+              } grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px] font-mono`}
+            >
               <select
                 aria-label="Filter by Severity"
                 value={severityFilter}
                 onChange={(e) =>
                   setSeverityFilter(e.target.value as SeverityLevel | 'all')
                 }
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">Severity: All</option>
                 <option value="critical">◆ Critical</option>
@@ -1023,7 +1032,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 onChange={(e) =>
                   setCategoryFilter(e.target.value as FindingCategory | 'all')
                 }
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">Category: All</option>
                 <option value="security">Security</option>
@@ -1042,7 +1051,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 onChange={(e) =>
                   setStatusFilter(e.target.value as FindingStatus | 'all')
                 }
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">Status: All</option>
                 <option value="unreviewed">Unreviewed</option>
@@ -1057,7 +1066,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 onChange={(e) =>
                   setSourceFilter(e.target.value as AnalysisSourceType | 'all')
                 }
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">Engine: All</option>
                 <option value="corroborated">Corroborated (Static+AI)</option>
@@ -1069,7 +1078,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 aria-label="Filter by Source File"
                 value={fileFilter}
                 onChange={(e) => setFileFilter(e.target.value)}
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">File: All ({review.files.length})</option>
                 {review.files.map((f) => (
@@ -1087,7 +1096,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     e.target.value as 'high' | 'medium' | 'low' | 'all'
                   )
                 }
-                className="px-2 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="px-1.5 py-1 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] min-w-0 truncate"
               >
                 <option value="all">Confidence: All</option>
                 <option value="high">Conf: High</option>
@@ -1170,69 +1179,68 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         }
                       }
                     }}
-                    className={`p-3.5 transition-colors cursor-pointer select-none ${
+                    className={`p-3 border-l-[3px] transition-colors cursor-pointer select-none ${
                       isSelected
-                        ? 'bg-[var(--pg-bg-elevated)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
-                        : 'bg-[var(--pg-bg-surface)] hover:bg-[var(--pg-bg-workspace)]'
+                        ? 'border-l-[var(--pg-accent)] bg-[var(--pg-bg-elevated)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
+                        : 'border-l-transparent bg-[var(--pg-bg-surface)] hover:bg-[var(--pg-bg-workspace)]'
                     }`}
                   >
                     {/* Row 1: Severity + Category + Rule ID + Review Status */}
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <SeverityLabel severity={finding.severity} compact />
-                        <span className="font-mono text-[11px] text-[var(--pg-text-muted)] uppercase">
+                        <span className="font-mono text-[10.5px] text-[var(--pg-text-muted)] uppercase">
                           {finding.category}
                         </span>
                         {ruleId && (
-                          <span className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+                          <span className="font-mono text-[10.5px] text-[var(--pg-text-secondary)]">
                             [{ruleId}]
                           </span>
                         )}
                       </div>
-                      <FindingStatusLabel status={finding.status} />
+                      <FindingStatusLabel status={finding.status} compact />
                     </div>
 
                     {/* Row 2: Finding Title */}
-                    <div className="text-xs font-semibold text-[var(--pg-text-primary)] leading-snug mb-1">
+                    <div className="text-[13px] font-semibold text-[var(--pg-text-primary)] leading-snug mb-1 break-words">
                       {finding.title}
                     </div>
 
                     {/* Row 3: Concise Technical Explanation Preview */}
-                    <p className="text-[11px] text-[var(--pg-text-secondary)] line-clamp-2 leading-relaxed mb-2">
+                    <p className="text-xs text-[var(--pg-text-secondary)] line-clamp-2 leading-relaxed mb-2.5">
                       {finding.explanation}
                     </p>
 
                     {/* Row 4: Verified File + Line Range + Confidence + Engine */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--pg-text-muted)] tabular-nums pt-1 border-t border-[var(--pg-border-subtle)]">
-                      <span
-                        className="truncate max-w-[210px] text-[var(--pg-text-secondary)]"
-                        title={
-                          finding.location.isValidLocation
-                            ? `${finding.location.filename}:L${finding.location.startLine}–L${finding.location.endLine}`
-                            : finding.location.validationNote || 'Location Quarantined'
-                        }
-                      >
-                        {finding.location.isValidLocation && resolvedFile ? (
-                          <>
-                            <span className="text-[var(--pg-success)] mr-1" aria-hidden="true">
-                              ✓
-                            </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono tabular-nums pt-1.5 border-t border-[var(--pg-border-subtle)]">
+                      {finding.location.isValidLocation && resolvedFile ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[var(--pg-success-subtle)] text-[var(--pg-success)] max-w-full truncate"
+                          title={`Verified source location: ${finding.location.filename}:L${finding.location.startLine}–L${finding.location.endLine}`}
+                        >
+                          <span aria-hidden="true">✓</span>
+                          <span className="truncate">
                             {shortFile}:L{finding.location.startLine}
                             {finding.location.endLine !== finding.location.startLine
                               ? `–${finding.location.endLine}`
                               : ''}
-                          </>
-                        ) : (
-                          <span className="text-[var(--pg-warning)]">
-                            △ {shortFile} · Quarantined (
-                            {finding.location.locationReason || 'invalid'})
                           </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span>Engine: {formatSourceEngineShort(finding.analysisSource)}</span>
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] text-[var(--pg-warning)] max-w-full truncate"
+                          title={finding.location.validationNote || 'Location Quarantined'}
+                        >
+                          <span aria-hidden="true">△</span>
+                          <span className="truncate">
+                            {shortFile} · Quarantined ({finding.location.locationReason || 'invalid'})
+                          </span>
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1.5 text-[var(--pg-text-muted)] shrink-0">
+                        <span>{formatSourceEngineShort(finding.analysisSource)}</span>
                         <span>·</span>
-                        <span>Conf: {finding.confidence.toUpperCase()}</span>
+                        <span>{finding.confidence.toUpperCase()}</span>
                       </div>
                     </div>
                   </div>
@@ -1287,7 +1295,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           {selectedFinding ? (
             <div className="flex flex-col h-full">
               {/* Sticky Evidence Navigation & Step Header */}
-              <div className="px-4 py-2 bg-[var(--pg-bg-workspace)] border-b border-[var(--pg-border-default)] flex items-center justify-between gap-2 text-xs font-mono shrink-0">
+              <div className="sticky top-0 z-10 px-4 py-2 bg-[var(--pg-bg-workspace)] border-b border-[var(--pg-border-default)] flex items-center justify-between gap-2 text-xs font-mono shrink-0">
                 <span className="text-[11px] text-[var(--pg-text-secondary)] tabular-nums">
                   {selectedFindingIndex >= 0
                     ? `FINDING ${selectedFindingIndex + 1} OF ${filteredFindings.length}`
@@ -1344,7 +1352,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <FindingStatusLabel status={selectedFinding.status} />
                   </div>
 
-                  <h2 className="text-sm font-semibold text-[var(--pg-text-primary)] leading-snug">
+                  <h2 className="text-sm font-semibold text-[var(--pg-text-primary)] leading-snug break-words">
                     {selectedFinding.title}
                   </h2>
 
@@ -1360,11 +1368,12 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                       <button
                         type="button"
                         onClick={() => handleNavigateToFindingSource(selectedFinding)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] cursor-pointer"
+                        title={`Jump to ${selectedFindingTargetFile.filename}:L${selectedFinding.location.startLine}`}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] max-w-full truncate cursor-pointer"
                       >
-                        <CornerDownRight className="w-3 h-3" />
-                        <span>
-                          {selectedFindingTargetFile.filename}:L
+                        <CornerDownRight className="w-3 h-3 shrink-0" />
+                        <span className="truncate">
+                          ✓ {selectedFindingTargetFile.filename}:L
                           {selectedFinding.location.startLine}
                           {selectedFinding.location.endLine !== selectedFinding.location.startLine
                             ? `–L${selectedFinding.location.endLine}`
@@ -1372,8 +1381,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         </span>
                       </button>
                     ) : (
-                      <span className="text-[var(--pg-warning)]">
-                        {selectedFinding.location.filename} · Location Quarantined (
+                      <span className="px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] text-[var(--pg-warning)] max-w-full truncate">
+                        △ {selectedFinding.location.filename} · Quarantined (
                         {selectedFinding.location.locationReason || 'unverified'})
                       </span>
                     )}

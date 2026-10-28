@@ -174,25 +174,21 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   return (
     <div className="flex flex-col h-full bg-[var(--pg-bg-code)] text-[var(--pg-text-primary)] select-text">
       {/* File Metadata & Source Toolbar */}
-      <div className="px-3 py-2 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono shrink-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <span
             className="text-[var(--pg-text-primary)] font-semibold truncate"
             title={file.filename}
           >
             {file.filename}
           </span>
-          <span className="text-[var(--pg-text-muted)] shrink-0">
-            ({file.language.toUpperCase()} · {file.changeStatus.toUpperCase()} · {lines.length}{' '}
-            lines)
+          <span className="text-[11px] text-[var(--pg-text-muted)] shrink-0">
+            {file.language.toUpperCase()} · {lines.length}L · {validFindings.length} finding
+            {validFindings.length === 1 ? '' : 's'}
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[11px] text-[var(--pg-text-secondary)]">
-            {validFindings.length} verified finding{validFindings.length === 1 ? '' : 's'}
-          </span>
-
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
           {verifiedSelectedLocation && (
             <button
               type="button"
@@ -297,9 +293,9 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   >
                     {/* Gutter: Active Marker + Severity Glyph + Tabular Line Number */}
                     <td
-                      className={`w-24 px-2 py-0.5 select-none border-r text-right align-top tabular-nums shrink-0 ${
+                      className={`w-14 sm:w-16 px-1.5 sm:px-2 py-0.5 select-none border-r text-right align-top tabular-nums shrink-0 ${
                         isSelectedRange
-                          ? 'bg-[var(--pg-bg-elevated)] border-[var(--pg-border-strong)] text-[var(--pg-accent-text)] font-semibold'
+                          ? 'bg-[var(--pg-bg-elevated)] border-l-[3px] border-l-[var(--pg-accent)] border-r-[var(--pg-border-strong)] text-[var(--pg-accent-text)] font-semibold'
                           : primaryFinding
                           ? 'bg-[var(--pg-bg-code-gutter)] border-[var(--pg-border-default)] text-[var(--pg-text-primary)]'
                           : 'bg-[var(--pg-bg-code-gutter)] border-[var(--pg-border-subtle)] text-[var(--pg-text-muted)]'
@@ -339,7 +335,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
 
                     {/* Verbatim Code Line */}
                     <td
-                      className={`px-4 py-0.5 font-mono text-[var(--pg-text-primary)] ${
+                      className={`px-3 sm:px-4 py-0.5 font-mono text-[var(--pg-text-primary)] ${
                         wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'
                       }`}
                     >
@@ -350,10 +346,10 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   {/* Inline Finding Callout Banner directly below the start line of the selected finding */}
                   {isSelectedStartLine && selectedFinding && verifiedSelectedLocation && (
                     <tr className="bg-[var(--pg-bg-elevated)] border-y border-[var(--pg-border-strong)]">
-                      <td className="px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-strong)] align-top uppercase font-semibold">
+                      <td className="px-1.5 sm:px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-l-[3px] border-l-[var(--pg-accent)] border-r border-r-[var(--pg-border-strong)] align-top uppercase font-semibold">
                         ACTIVE
                       </td>
-                      <td className="px-4 py-2 font-sans text-xs">
+                      <td className="px-3 sm:px-4 py-2 font-sans text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <SeverityLabel severity={selectedFinding.severity} compact />
