@@ -399,7 +399,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             {/* 6.4 Attention Queue (7 columns) */}
             <section
               aria-label="Unresolved findings attention queue"
-              className="lg:col-span-7 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]"
+              className="lg:col-span-7 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] min-w-0"
             >
               <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2">
                 <div>
@@ -473,7 +473,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             {/* 6.3 Chronological Review Timeline (5 columns) */}
             <section
               aria-label="Recent review timeline"
-              className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]"
+              className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] min-w-0"
             >
               <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2">
                 <div>

@@ -106,6 +106,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+@media (min-width: 1024px) {
+  .pg-workspace-panel {
+    width: var(--pg-panel-width, 33.333%);
+    flex: 0 0 var(--pg-panel-width, 33.333%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

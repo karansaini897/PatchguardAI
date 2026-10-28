@@ -715,50 +715,57 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       )}
 
       {/* Mobile / Tablet Sticky Sub-Pane Switcher (< 1024px) */}
-      <div className="lg:hidden sticky top-0 z-20 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)]">
-        <div className="flex">
+      <div className="lg:hidden sticky top-0 z-20 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] w-full">
+        <div
+          role="tablist"
+          aria-label="Workspace view selector"
+          className="grid grid-cols-3 w-full"
+        >
           <button
             type="button"
+            role="tab"
+            aria-selected={mobilePane === 'source'}
             onClick={() => setMobilePane('source')}
-            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
+            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'source'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
-            A. Source ({review.files.length})
+            Source ({review.files.length})
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mobilePane === 'findings'}
             onClick={() => setMobilePane('findings')}
-            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
+            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'findings'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
-            B. Findings ({filteredFindings.length})
+            Findings ({filteredFindings.length})
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mobilePane === 'evidence'}
             onClick={() => setMobilePane('evidence')}
-            className={`flex-1 py-2 px-1 text-xs font-mono border-b-2 cursor-pointer transition-colors ${
+            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'evidence'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
-            C. Evidence{' '}
-            {selectedFinding && selectedFinding.location.isValidLocation
-              ? `(L${selectedFinding.location.startLine})`
-              : ''}
+            Evidence Details
           </button>
         </div>
 
         {/* Compact Active Finding & File Context Bar on Mobile/Tablet */}
         {selectedFinding && (
-          <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-t border-[var(--pg-border-subtle)] flex items-center justify-between gap-2 text-[11px] font-mono">
-            <div className="flex items-center gap-1.5 min-w-0 truncate">
+          <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-t border-[var(--pg-border-subtle)] flex items-center justify-between gap-2 text-[11px] font-mono w-full">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <SeverityLabel severity={selectedFinding.severity} compact />
               <span className="text-[var(--pg-text-primary)] truncate">
                 {selectedFinding.title}
@@ -773,7 +780,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     onClick={() => handleNavigateToFindingSource(selectedFinding)}
                     className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] cursor-pointer"
                   >
-                    View L{selectedFinding.location.startLine}
+                    Source L{selectedFinding.location.startLine}
                   </button>
                 )}
               {mobilePane !== 'evidence' && (
@@ -782,7 +789,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   onClick={() => setMobilePane('evidence')}
                   className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
                 >
-                  Evidence
+                  Evidence →
                 </button>
               )}
             </div>
@@ -793,15 +800,19 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       {/* Three-Pane Resizable Investigation Canvas */}
       <div
         ref={workspaceContainerRef}
-        className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden"
+        className="flex-1 flex flex-col lg:flex-row min-h-0 min-w-0 w-full overflow-hidden"
       >
         {/* ===================================================================
             PANEL A: SOURCE CODE & FILE SWITCHER
             =================================================================== */}
         <section
           aria-label="Source Code Viewer"
-          style={{ width: `${layoutPrefs.sourceWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 border-r border-[var(--pg-border-default)] ${
+          style={
+            {
+              '--pg-panel-width': `${layoutPrefs.sourceWidthPercent}%`,
+            } as React.CSSProperties
+          }
+          className={`pg-workspace-panel w-full flex-1 flex flex-col min-h-0 min-w-0 lg:border-r border-[var(--pg-border-default)] ${
             mobilePane === 'source' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -949,8 +960,12 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             =================================================================== */}
         <section
           aria-label="Prioritized Review Findings"
-          style={{ width: `${layoutPrefs.findingsWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
+          style={
+            {
+              '--pg-panel-width': `${layoutPrefs.findingsWidthPercent}%`,
+            } as React.CSSProperties
+          }
+          className={`pg-workspace-panel w-full flex-1 flex flex-col min-h-0 min-w-0 lg:border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
             mobilePane === 'findings' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -1107,7 +1122,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           </div>
 
           {/* Findings List Surface */}
-          <div className="flex-1 overflow-y-auto divide-y divide-[var(--pg-border-default)]">
+          <div className="flex-1 overflow-y-auto divide-y divide-[var(--pg-border-default)] w-full">
             {verifiedFindings.length === 0 ? (
               /* Zero-Findings Review State (Distinguished from Filter-Empty State) */
               <div className="p-6 space-y-3 text-xs">
@@ -1166,20 +1181,14 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     aria-pressed={isSelected}
                     onClick={() => {
                       handleSelectFinding(finding, true);
-                      if (window.innerWidth < 1024 && !isSelected) {
-                        setMobilePane('evidence');
-                      }
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         handleSelectFinding(finding, true);
-                        if (window.innerWidth < 1024 && !isSelected) {
-                          setMobilePane('evidence');
-                        }
                       }
                     }}
-                    className={`p-3 border-l-[3px] transition-colors cursor-pointer select-none ${
+                    className={`p-3 border-l-[3px] transition-colors cursor-pointer select-none w-full ${
                       isSelected
                         ? 'border-l-[var(--pg-accent)] bg-[var(--pg-bg-elevated)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
                         : 'border-l-transparent bg-[var(--pg-bg-surface)] hover:bg-[var(--pg-bg-workspace)]'
@@ -1243,6 +1252,34 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         <span>{finding.confidence.toUpperCase()}</span>
                       </div>
                     </div>
+
+                    {/* Mobile/Tablet Quick View Switcher Buttons on Active Card */}
+                    {isSelected && (
+                      <div className="lg:hidden flex flex-wrap items-center gap-2 pt-2.5 mt-2 border-t border-[var(--pg-border-subtle)] font-mono text-[11px]">
+                        {finding.location.isValidLocation && resolvedFile && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleNavigateToFindingSource(finding);
+                            }}
+                            className="px-2.5 py-1 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] cursor-pointer"
+                          >
+                            View in Source (L{finding.location.startLine})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMobilePane('evidence');
+                          }}
+                          className="px-2.5 py-1 bg-[var(--pg-accent)] text-[var(--pg-text-inverse)] font-semibold cursor-pointer"
+                        >
+                          Inspect Evidence Details →
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -1287,8 +1324,12 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             =================================================================== */}
         <section
           aria-label="Finding Evidence and Remediation Details"
-          style={{ width: `${evidenceWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
+          style={
+            {
+              '--pg-panel-width': `${evidenceWidthPercent}%`,
+            } as React.CSSProperties
+          }
+          className={`pg-workspace-panel w-full flex-1 flex flex-col min-h-0 min-w-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
             mobilePane === 'evidence' ? 'flex' : 'hidden lg:flex'
           }`}
         >

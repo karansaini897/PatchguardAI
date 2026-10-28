@@ -146,12 +146,12 @@ export default function App() {
     setEvalCases(fresh);
   };
 
-  const navItems: Array<{ id: ActiveScreen; label: string }> = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'workspace', label: 'Workspace' },
-    { id: 'history', label: 'History' },
-    { id: 'evaluation-lab', label: 'Evaluation Lab' },
-    { id: 'settings', label: 'Settings' },
+  const navItems: Array<{ id: ActiveScreen; label: string; shortLabel: string }> = [
+    { id: 'overview', label: 'Overview', shortLabel: 'Overview' },
+    { id: 'workspace', label: 'Workspace', shortLabel: 'Workspace' },
+    { id: 'history', label: 'History', shortLabel: 'History' },
+    { id: 'evaluation-lab', label: 'Evaluation Lab', shortLabel: 'Eval Lab' },
+    { id: 'settings', label: 'Settings', shortLabel: 'Settings' },
   ];
 
   const screenTitles: Record<ActiveScreen, string> = {
@@ -164,25 +164,66 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--pg-bg-canvas)] text-[var(--pg-text-primary)]">
-      {/* Strict 3-Zone Top Bar Contract */}
-      <header className="h-[3.25rem] flex items-center justify-between gap-3 sm:gap-8 px-3 sm:px-6 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] shrink-0">
-        {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#overview"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveScreen('overview');
-          }}
-          className="text-sm sm:text-base font-bold tracking-tight text-[var(--pg-text-primary)] whitespace-nowrap shrink-0"
-        >
-          PatchGuard AI
-        </a>
+    <div className="min-h-screen flex flex-col bg-[var(--pg-bg-canvas)] text-[var(--pg-text-primary)] overflow-x-hidden">
+      {/* Application Header: Single-row on >= 768px, Intentional Two-Tier on < 768px */}
+      <header className="border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] shrink-0">
+        <div className="h-12 md:h-[3.25rem] flex items-center justify-between gap-3 md:gap-8 px-3 sm:px-6">
+          {/* Zone 1: Single text element wordmark */}
+          <a
+            href="#overview"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveScreen('overview');
+            }}
+            className="text-sm sm:text-base font-bold tracking-tight text-[var(--pg-text-primary)] whitespace-nowrap shrink-0"
+          >
+            PatchGuard AI
+          </a>
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
+          {/* Zone 2 (Desktop >= 768px): 5 concise single-line text navigation links */}
+          <nav
+            aria-label="Primary workspace navigation"
+            className="hidden md:flex items-center gap-5 py-1 text-xs font-medium text-[var(--pg-text-secondary)] min-w-0"
+          >
+            {navItems.map((item) => {
+              const isCurrent = activeScreen === item.id;
+              return (
+                <a
+                  key={item.id}
+                  href={`#${item.id}`}
+                  aria-current={isCurrent ? 'page' : undefined}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveScreen(item.id);
+                  }}
+                  className={`py-1 transition-colors whitespace-nowrap shrink-0 underline-offset-8 ${
+                    isCurrent
+                      ? 'text-[var(--pg-text-primary)] underline decoration-[var(--pg-accent)] decoration-2 font-semibold'
+                      : 'hover:text-[var(--pg-text-primary)] hover:underline'
+                  }`}
+                >
+                  {item.label}
+                </a>
+              );
+            })}
+          </nav>
+
+          {/* Zone 3: 1 primary action */}
+          <div className="flex items-center shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveScreen('new-review')}
+              className="px-3 sm:px-3.5 py-1.5 text-xs font-semibold bg-[var(--pg-accent)] text-[var(--pg-text-inverse)] hover:bg-[var(--pg-accent-hover)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              New Review
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Compact Navigation Bar (< 768px): Full-width 5-destination grid without clipping */}
         <nav
-          aria-label="Primary workspace navigation"
-          className="flex items-center gap-3 sm:gap-5 overflow-x-auto py-1 text-xs font-medium text-[var(--pg-text-secondary)] min-w-0"
+          aria-label="Mobile workspace navigation"
+          className="md:hidden grid grid-cols-5 border-t border-[var(--pg-border-subtle)] bg-[var(--pg-bg-workspace)] text-[10.5px] sm:text-xs font-medium"
         >
           {navItems.map((item) => {
             const isCurrent = activeScreen === item.id;
@@ -195,44 +236,35 @@ export default function App() {
                   e.preventDefault();
                   setActiveScreen(item.id);
                 }}
-                className={`py-1 transition-colors whitespace-nowrap shrink-0 underline-offset-8 ${
+                className={`py-2 px-0.5 text-center whitespace-nowrap border-b-2 transition-colors ${
                   isCurrent
-                    ? 'text-[var(--pg-text-primary)] underline decoration-[var(--pg-accent)] decoration-2 font-semibold'
-                    : 'hover:text-[var(--pg-text-primary)] hover:underline'
+                    ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
+                    : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
                 }`}
               >
-                {item.label}
+                {item.shortLabel}
               </a>
             );
           })}
         </nav>
-
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveScreen('new-review')}
-            className="px-2.5 sm:px-3.5 py-1.5 text-xs font-semibold bg-[var(--pg-accent)] text-[var(--pg-text-inverse)] hover:bg-[var(--pg-accent-hover)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            New Review
-          </button>
-        </div>
       </header>
 
       {/* Secondary Contextual Workspace Utility Bar (Below Header) */}
-      <div className="border-b border-[var(--pg-border-subtle)] bg-[var(--pg-bg-workspace)] px-3 sm:px-6 py-1.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] font-mono text-[var(--pg-text-muted)] shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[var(--pg-text-secondary)] font-medium whitespace-nowrap">
+      <div className="border-b border-[var(--pg-border-subtle)] bg-[var(--pg-bg-workspace)] px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 text-[11px] font-mono text-[var(--pg-text-muted)] shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+          <span className="text-[var(--pg-text-secondary)] font-medium whitespace-nowrap shrink-0">
             {screenTitles[activeScreen]}
           </span>
           {activeReview && (
             <>
-              <span aria-hidden="true">·</span>
+              <span aria-hidden="true" className="shrink-0">
+                ·
+              </span>
               <button
                 type="button"
                 onClick={() => setActiveScreen('workspace')}
                 title={`Open active review in Workspace: ${activeReview.title}`}
-                className="text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] truncate max-w-[180px] sm:max-w-[340px] cursor-pointer text-left"
+                className="text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] truncate min-w-0 cursor-pointer text-left"
               >
                 Active: {activeReview.isDemoRecord ? '[Demo] ' : ''}
                 {activeReview.title}
@@ -241,14 +273,15 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+        <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
           <button
             type="button"
             onClick={() => setIsCommandPaletteOpen(true)}
             aria-label="Open Command Palette (Shortcut Command+K or Control+K)"
             className="hover:text-[var(--pg-text-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            Command Palette (⌘K)
+            <span className="sm:hidden">⌘K</span>
+            <span className="hidden sm:inline">Command Palette (⌘K)</span>
           </button>
           <span aria-hidden="true">·</span>
           <button
@@ -257,7 +290,10 @@ export default function App() {
             aria-label={`Switch visual theme, currently ${theme === 'dark' ? 'Dark Graphite' : 'Light Editorial'}`}
             className="hover:text-[var(--pg-text-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            Theme: {theme === 'dark' ? 'Dark Graphite' : 'Light Editorial'}
+            <span className="sm:hidden">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+            <span className="hidden sm:inline">
+              Theme: {theme === 'dark' ? 'Dark Graphite' : 'Light Editorial'}
+            </span>
           </button>
         </div>
       </div>

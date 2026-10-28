@@ -127,10 +127,10 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
   };
 
   return (
-    <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div className="max-w-[1360px] w-full mx-auto px-3 sm:px-6 py-6 space-y-6 overflow-x-hidden">
       {/* Header & Honest Storage Architecture Disclosure */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <div className="font-mono text-xs text-[var(--pg-text-muted)]">
             REVIEW HISTORY · TECHNICAL AUDIT LEDGER
           </div>
@@ -139,9 +139,9 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
           </h1>
         </div>
 
-        <div className="px-3 py-2 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] flex items-center gap-2.5 text-xs font-mono text-[var(--pg-text-secondary)]">
-          <Database className="w-3.5 h-3.5 text-[var(--pg-info)] shrink-0" />
-          <span>
+        <div className="px-3 py-2 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] flex items-start sm:items-center gap-2.5 text-xs font-mono text-[var(--pg-text-secondary)] min-w-0">
+          <Database className="w-3.5 h-3.5 text-[var(--pg-info)] shrink-0 mt-0.5 sm:mt-0" />
+          <span className="break-words min-w-0">
             Persistence Adapter:{' '}
             <strong className="text-[var(--pg-text-primary)]">
               {isLocalStorageAvailable
@@ -153,8 +153,8 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="p-3 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-3">
-        <div className="relative flex-1 min-w-[220px]">
+      <div className="p-3 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3">
+        <div className="relative flex-1 min-w-0">
           <Search className="w-3.5 h-3.5 text-[var(--pg-text-muted)] absolute left-3 top-2.5" />
           <input
             type="search"
@@ -169,7 +169,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-mono min-w-0">
           <select
             aria-label="Filter by completion status"
             value={statusFilter}
@@ -177,7 +177,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
               setStatusFilter(e.target.value as ReviewExecutionStatus | 'all');
               setPage(1);
             }}
-            className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+            className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] min-w-0 max-w-full truncate"
           >
             <option value="all">Status: All</option>
             <option value="completed">Completed (AI Assisted)</option>
@@ -193,7 +193,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
               setLanguageFilter(e.target.value as SupportedLanguage | 'all');
               setPage(1);
             }}
-            className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+            className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] min-w-0 max-w-full truncate"
           >
             <option value="all">Language: All</option>
             <option value="typescript">TypeScript</option>

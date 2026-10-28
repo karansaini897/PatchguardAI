@@ -379,7 +379,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
       {/* Main Two-Column Engineering Input Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left 8 Columns: Source Code Editor & File Tabs */}
-        <div className="lg:col-span-8 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] flex flex-col">
+        <div className="lg:col-span-8 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] flex flex-col min-w-0">
           {/* File Tabs & Add File Button */}
           <div className="px-3 py-2 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2 overflow-x-auto">
             <div className="flex items-center gap-1" role="tablist" aria-label="Source files in review">
@@ -502,7 +502,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 }
               }}
               spellCheck={false}
-              className="flex-1 p-3 bg-transparent font-mono text-[12.5px] leading-[1.65] text-[var(--pg-text-primary)] focus:outline-none resize-none whitespace-pre overflow-auto"
+              className="flex-1 min-w-0 p-3 bg-transparent font-mono text-[12.5px] leading-[1.65] text-[var(--pg-text-primary)] focus:outline-none resize-none whitespace-pre overflow-auto"
             />
           </div>
 
@@ -517,7 +517,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
         </div>
 
         {/* Right 4 Columns: Review Title, Objective, Focus Categories & Execution */}
-        <div className="lg:col-span-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-4 space-y-5">
+        <div className="lg:col-span-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-4 space-y-5 min-w-0">
           <div>
             <label
               htmlFor="review-title-input"
