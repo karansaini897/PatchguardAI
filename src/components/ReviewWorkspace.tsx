@@ -515,7 +515,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[var(--pg-bg-canvas)] overflow-hidden">
+    <div className="flex flex-col lg:h-[calc(100vh-5.25rem)] min-h-[560px] bg-[var(--pg-bg-canvas)] overflow-x-hidden lg:overflow-hidden">
       {/* Screen-Reader Live Status Region */}
       <div className="sr-only" role="status" aria-live="polite">
         {liveStatusAnnouncement}
@@ -598,7 +598,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         </div>
 
         {/* Severity Distribution Bar, Counts, Stage Drawer Toggle & Split Reset */}
-        <div className="flex flex-wrap items-center gap-3 text-xs font-mono shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono max-w-full min-w-0">
           {/* Proportional Severity Distribution Bar (only when findings exist) */}
           {distribution.total > 0 && (
             <div
@@ -623,7 +623,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             </div>
           )}
 
-          <div className="flex items-center gap-2.5 border-r border-[var(--pg-border-default)] pr-3 tabular-nums">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 sm:border-r border-[var(--pg-border-default)] sm:pr-3 tabular-nums">
             <span className="text-[var(--pg-text-muted)]">FINDINGS ({distribution.total}):</span>
             <span className="text-[var(--pg-critical)] font-semibold">
               ◆ {distribution.critical} Crit
@@ -804,7 +804,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         <section
           aria-label="Source Code Viewer"
           style={{ width: `${layoutPrefs.sourceWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 border-r border-[var(--pg-border-default)] ${
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 border-r border-[var(--pg-border-default)] ${
             mobilePane === 'source' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -852,6 +852,47 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             })}
           </div>
 
+          {/* Cross-File or Quarantined Location Context Strip in Panel A */}
+          {selectedFinding &&
+            (!selectedFinding.location.isValidLocation ||
+              (selectedFindingTargetFile &&
+                activeFile &&
+                selectedFindingTargetFile.id !== activeFile.id)) && (
+              <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+                {selectedFinding.location.isValidLocation && selectedFindingTargetFile ? (
+                  <>
+                    <span className="text-[var(--pg-text-secondary)] truncate">
+                      Selected finding{' '}
+                      <strong className="text-[var(--pg-text-primary)]">
+                        {selectedFinding.title}
+                      </strong>{' '}
+                      is located in{' '}
+                      <span className="text-[var(--pg-accent-text)]">
+                        {selectedFindingTargetFile.filename}:L{selectedFinding.location.startLine}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleNavigateToFindingSource(selectedFinding)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] hover:bg-[var(--pg-bg-interactive)] shrink-0 cursor-pointer"
+                    >
+                      <CornerDownRight className="w-3 h-3" />
+                      <span>
+                        Jump to {selectedFindingTargetFile.filename.split('/').pop()}:L
+                        {selectedFinding.location.startLine}
+                      </span>
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-[var(--pg-warning)]">
+                    △ Selected finding has an unverified/quarantined location (
+                    {selectedFinding.location.locationReason || 'out-of-bounds'}) — line
+                    highlighting suppressed.
+                  </span>
+                )}
+              </div>
+            )}
+
           {/* Code Viewer Surface */}
           <div className="flex-1 min-h-0 overflow-hidden">
             {activeFile ? (
@@ -879,6 +920,9 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize source viewer and findings panel"
+          aria-valuemin={25}
+          aria-valuemax={56}
+          aria-valuenow={Math.round(layoutPrefs.sourceWidthPercent)}
           tabIndex={0}
           onMouseDown={() => {
             activeDragHandleRef.current = 'left';
@@ -909,7 +953,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         <section
           aria-label="Prioritized Review Findings"
           style={{ width: `${layoutPrefs.findingsWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 border-r border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] ${
             mobilePane === 'findings' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -1170,6 +1214,9 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                       >
                         {finding.location.isValidLocation && resolvedFile ? (
                           <>
+                            <span className="text-[var(--pg-success)] mr-1" aria-hidden="true">
+                              ✓
+                            </span>
                             {shortFile}:L{finding.location.startLine}
                             {finding.location.endLine !== finding.location.startLine
                               ? `–${finding.location.endLine}`
@@ -1177,7 +1224,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                           </>
                         ) : (
                           <span className="text-[var(--pg-warning)]">
-                            {shortFile} · Quarantined ({finding.location.locationReason || 'invalid'})
+                            △ {shortFile} · Quarantined (
+                            {finding.location.locationReason || 'invalid'})
                           </span>
                         )}
                       </span>
@@ -1199,6 +1247,9 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize findings panel and evidence details panel"
+          aria-valuemin={20}
+          aria-valuemax={53}
+          aria-valuenow={Math.round(layoutPrefs.findingsWidthPercent)}
           tabIndex={0}
           onMouseDown={() => {
             activeDragHandleRef.current = 'right';
@@ -1229,7 +1280,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         <section
           aria-label="Finding Evidence and Remediation Details"
           style={{ width: `${evidenceWidthPercent}%` }}
-          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
+          className={`max-lg:!w-full flex-1 lg:flex-none flex flex-col min-h-0 min-w-0 bg-[var(--pg-bg-surface)] overflow-y-auto ${
             mobilePane === 'evidence' ? 'flex' : 'hidden lg:flex'
           }`}
         >
@@ -1346,13 +1397,13 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                       03 · SUPPORTING CODE EVIDENCE
                     </span>
                     {selectedFinding.location.isValidLocation ? (
-                      <span className="text-[var(--pg-text-muted)] tabular-nums">
-                        Verified L{selectedFinding.location.startLine}–L
+                      <span className="text-[var(--pg-success)] tabular-nums">
+                        ✓ Verified L{selectedFinding.location.startLine}–L
                         {selectedFinding.location.endLine}
                       </span>
                     ) : (
                       <span className="text-[var(--pg-warning)] uppercase">
-                        Quarantined ({selectedFinding.location.locationReason || 'unverified'})
+                        △ Quarantined ({selectedFinding.location.locationReason || 'unverified'})
                       </span>
                     )}
                   </div>

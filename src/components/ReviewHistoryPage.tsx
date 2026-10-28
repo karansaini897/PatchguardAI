@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ReviewExecutionStatus,
   ReviewRecord,
@@ -11,7 +11,7 @@ import { ReviewStatusLabel, SeverityLabel } from './SeverityIndicator';
 import {
   ArrowUpDown,
   Database,
-  ExternalLink,
+  RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
@@ -43,6 +43,27 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
   const [inspectedRecordId, setInspectedRecordId] = useState<string | null>(null);
 
   const pageSize = 10;
+
+  const hasActiveFilters =
+    searchQuery.trim() !== '' || statusFilter !== 'all' || languageFilter !== 'all';
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setLanguageFilter('all');
+    setPage(1);
+  };
+
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setConfirmDeleteId(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmDeleteId]);
 
   const filteredAndSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -100,8 +121,13 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
     }
   };
 
+  const getAriaSort = (field: SortField): 'ascending' | 'descending' | 'none' => {
+    if (sortField !== field) return 'none';
+    return sortAsc ? 'ascending' : 'descending';
+  };
+
   return (
-    <div className="max-w-[1360px] mx-auto px-6 py-6 space-y-6">
+    <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* Header & Honest Storage Architecture Disclosure */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
@@ -128,7 +154,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
 
       {/* Filter & Search Bar */}
       <div className="p-3 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-3">
-        <div className="relative flex-1 min-w-[240px]">
+        <div className="relative flex-1 min-w-[220px]">
           <Search className="w-3.5 h-3.5 text-[var(--pg-text-muted)] absolute left-3 top-2.5" />
           <input
             type="search"
@@ -176,6 +202,17 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
             <option value="java">Java</option>
             <option value="sql">SQL</option>
           </select>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-info)] hover:border-[var(--pg-border-strong)] cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Filters</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -214,7 +251,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
               onClick={() => setConfirmDeleteId(null)}
               className="px-3 py-1.5 font-mono text-xs border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] cursor-pointer"
             >
-              Cancel
+              Cancel (Esc)
             </button>
           </div>
         </div>
@@ -244,7 +281,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
           </div>
         </div>
       ) : filteredAndSorted.length === 0 ? (
-        <div className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-6 text-xs space-y-2">
+        <div className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-6 text-xs space-y-3">
           <div className="font-mono font-semibold text-[var(--pg-warning)]">
             NO MATCHING REVIEW RECORDS
           </div>
@@ -252,6 +289,14 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
             None of the {reviews.length} stored review(s) match your active search or filter
             criteria.
           </p>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset Active Filters</span>
+          </button>
         </div>
       ) : (
         <div className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] overflow-x-auto">
@@ -262,44 +307,80 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
                 <th className="py-2.5 px-3">TITLE & SOURCE FILES</th>
                 <th className="py-2.5 px-3">LANGUAGE</th>
                 <th className="py-2.5 px-3">STATUS</th>
-                <th className="py-2.5 px-3 text-right">
+                <th
+                  aria-sort={getAriaSort('findingsCount')}
+                  className="py-2.5 px-3 text-right"
+                >
                   <button
                     type="button"
                     onClick={() => toggleSort('findingsCount')}
-                    className="inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer"
+                    className={`inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer ${
+                      sortField === 'findingsCount' ? 'text-[var(--pg-accent-text)] font-semibold' : ''
+                    }`}
                   >
                     <span>FINDINGS</span>
-                    <ArrowUpDown className="w-3 h-3" />
+                    {sortField === 'findingsCount' ? (
+                      <span>{sortAsc ? '↑' : '↓'}</span>
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3" />
+                    )}
                   </button>
                 </th>
-                <th className="py-2.5 px-3">
+                <th
+                  aria-sort={getAriaSort('highestSeverity')}
+                  className="py-2.5 px-3"
+                >
                   <button
                     type="button"
                     onClick={() => toggleSort('highestSeverity')}
-                    className="inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer"
+                    className={`inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer ${
+                      sortField === 'highestSeverity' ? 'text-[var(--pg-accent-text)] font-semibold' : ''
+                    }`}
                   >
                     <span>HIGHEST SEVERITY</span>
-                    <ArrowUpDown className="w-3 h-3" />
+                    {sortField === 'highestSeverity' ? (
+                      <span>{sortAsc ? '↑' : '↓'}</span>
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3" />
+                    )}
                   </button>
                 </th>
-                <th className="py-2.5 px-3 text-right">
+                <th
+                  aria-sort={getAriaSort('durationMs')}
+                  className="py-2.5 px-3 text-right"
+                >
                   <button
                     type="button"
                     onClick={() => toggleSort('durationMs')}
-                    className="inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer"
+                    className={`inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer ${
+                      sortField === 'durationMs' ? 'text-[var(--pg-accent-text)] font-semibold' : ''
+                    }`}
                   >
                     <span>DURATION</span>
-                    <ArrowUpDown className="w-3 h-3" />
+                    {sortField === 'durationMs' ? (
+                      <span>{sortAsc ? '↑' : '↓'}</span>
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3" />
+                    )}
                   </button>
                 </th>
-                <th className="py-2.5 px-3">
+                <th
+                  aria-sort={getAriaSort('createdAt')}
+                  className="py-2.5 px-3"
+                >
                   <button
                     type="button"
                     onClick={() => toggleSort('createdAt')}
-                    className="inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer"
+                    className={`inline-flex items-center gap-1 hover:text-[var(--pg-text-primary)] cursor-pointer ${
+                      sortField === 'createdAt' ? 'text-[var(--pg-accent-text)] font-semibold' : ''
+                    }`}
                   >
                     <span>TIMESTAMP</span>
-                    <ArrowUpDown className="w-3 h-3" />
+                    {sortField === 'createdAt' ? (
+                      <span>{sortAsc ? '↑' : '↓'}</span>
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3" />
+                    )}
                   </button>
                 </th>
                 <th className="py-2.5 px-3 text-right">ACTIONS</th>
@@ -317,6 +398,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
                       <td className="py-2.5 px-3 font-mono text-[11px] text-[var(--pg-text-secondary)] whitespace-nowrap">
                         <button
                           type="button"
+                          aria-expanded={isInspected}
                           onClick={() =>
                             setInspectedRecordId(isInspected ? null : rev.id)
                           }

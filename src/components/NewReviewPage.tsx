@@ -45,6 +45,7 @@ const OBJECTIVE_PRESETS = [
 export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted }) => {
   const defaultSnippet = CURATED_CODE_SNIPPETS[0];
 
+  const [loadedSnippetId, setLoadedSnippetId] = useState<string>(defaultSnippet.id);
   const [title, setTitle] = useState<string>(defaultSnippet.title);
   const [objective, setObjective] = useState<string>(defaultSnippet.objective);
   const [focusAreas, setFocusAreas] = useState<FindingCategory[]>(defaultSnippet.focusAreas);
@@ -64,15 +65,32 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
   const [validationError, setValidationError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<StructuredApiError | null>(null);
 
+  const gutterRef = React.useRef<HTMLDivElement | null>(null);
+
   const activeFile = files[activeFileIdx] || files[0];
 
+  // Dismiss overwrite confirmation on Escape key
+  React.useEffect(() => {
+    if (!pendingSnippetConfirm) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPendingSnippetConfirm(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingSnippetConfirm]);
+
   const toggleFocusArea = (cat: FindingCategory) => {
+    setValidationError(null);
     setFocusAreas((prev) =>
       prev.includes(cat) ? prev.filter((item) => item !== cat) : [...prev, cat]
     );
   };
 
   const applySnippet = (snippet: CodeExampleSnippet) => {
+    setLoadedSnippetId(snippet.id);
     setTitle(snippet.title);
     setObjective(snippet.objective);
     setFocusAreas(snippet.focusAreas);
@@ -90,6 +108,12 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     } else {
       applySnippet(snippet);
     }
+  };
+
+  const handleRevertToLoadedExample = () => {
+    const currentExample =
+      CURATED_CODE_SNIPPETS.find((s) => s.id === loadedSnippetId) || defaultSnippet;
+    applySnippet(currentExample);
   };
 
   const handleUpdateActiveFile = (
@@ -124,7 +148,8 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     if (files.length <= 1) return;
     const next = files.filter((_, i) => i !== idx);
     setFiles(next);
-    setActiveFileIdx(Math.max(0, idx - 1));
+    setActiveFileIdx(Math.max(0, Math.min(activeFileIdx, next.length - 1)));
+    setIsDirty(true);
   };
 
   const handleSubmitReview = async (overrideMode?: 'hybrid' | 'static-only' | 'ai-only') => {
@@ -135,13 +160,17 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     // 1. Validate input
     for (const f of files) {
       if (!f.filename.trim()) {
-        setValidationError('Every source file must have a non-empty filename.');
+        setValidationError('Every source file must have a non-empty filename or path.');
         return;
       }
       if (!f.content.trim()) {
         setValidationError(`Source file "${f.filename}" cannot be empty.`);
         return;
       }
+    }
+    if (focusAreas.length === 0) {
+      setValidationError('Select at least one investigation focus category before running analysis.');
+      return;
     }
 
     const modeToUse = overrideMode || analysisMode;
@@ -167,18 +196,45 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
       return;
     }
 
+    setIsDirty(false);
     onReviewCompleted(result.review);
   };
 
   const activeLines = activeFile ? activeFile.content.split(/\r?\n/) : [];
 
+  const modeDescriptions: Record<'hybrid' | 'static-only' | 'ai-only', { title: string; detail: string }> = {
+    hybrid: {
+      title: 'Hybrid (Static + AI Corroboration · Recommended)',
+      detail:
+        'Executes deterministic structural rules (pg-static-ast-1.4.2) alongside Gemini 3.1 Flash Lite. Overlapping detections are upgraded to Corroborated status; if Gemini is unreachable or unconfigured, verified static findings are still preserved.',
+    },
+    'static-only': {
+      title: 'Deterministic Static Analyzer Only',
+      detail:
+        'Runs local AST/pattern rules (SQLi CWE-89, async race hazards, <= .length bounds, silent exception blocks, hardcoded secrets, IDOR, N+1 loops) in <25ms without calling the Gemini API.',
+    },
+    'ai-only': {
+      title: 'Gemini Semantic Reasoning Only',
+      detail:
+        'Skips deterministic static rules and relies exclusively on gemini-3.1-flash-lite. Requires a valid GEMINI_API_KEY and live model availability; fails with a structured error if AI is unreachable.',
+    },
+  };
+
   return (
-    <div className="max-w-[1360px] mx-auto px-6 py-6 space-y-6">
+    <div className="max-w-[1360px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* Header & Example Loader */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
-          <div className="font-mono text-xs text-[var(--pg-text-muted)]">
-            NEW CODE REVIEW · INVESTIGATION SUBMISSION WORKFLOW
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-[var(--pg-text-muted)]">
+            <span>New Code Review · Investigation Submission Workflow</span>
+            {isDirty && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-[var(--pg-warning)] font-semibold">
+                  ● Unsaved Source Edits
+                </span>
+              </>
+            )}
           </div>
           <h1 className="text-xl font-semibold text-[var(--pg-text-primary)] mt-1">
             Configure Source Change & Investigation Scope
@@ -188,18 +244,38 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
         {/* Example Snippet Selector */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-[var(--pg-text-secondary)]">
-            Load Curated Example:
+            Curated Examples:
           </span>
-          {CURATED_CODE_SNIPPETS.map((snippet) => (
+          {CURATED_CODE_SNIPPETS.map((snippet) => {
+            const isLoaded = loadedSnippetId === snippet.id && !isDirty;
+            return (
+              <button
+                key={snippet.id}
+                type="button"
+                onClick={() => handleRequestLoadSnippet(snippet)}
+                aria-pressed={isLoaded}
+                title={snippet.description}
+                className={`px-2.5 py-1.5 text-xs font-mono border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  isLoaded
+                    ? 'border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] font-semibold'
+                    : 'border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)]'
+                }`}
+              >
+                {snippet.label.split('·')[0].trim()} · {snippet.files.length} file(s)
+              </button>
+            );
+          })}
+          {isDirty && (
             <button
-              key={snippet.id}
               type="button"
-              onClick={() => handleRequestLoadSnippet(snippet)}
-              className="px-2.5 py-1.5 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              onClick={handleRevertToLoadedExample}
+              title="Discard unsaved changes and restore the active example snippet"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-mono border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {snippet.label.split('·')[0].trim()} · {snippet.files.length} file(s)
+              <RotateCcw className="w-3 h-3" />
+              <span>Revert Edits</span>
             </button>
-          ))}
+          )}
         </div>
       </div>
 
@@ -208,6 +284,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
         <div
           role="alertdialog"
           aria-labelledby="overwrite-confirm-title"
+          aria-describedby="overwrite-confirm-desc"
           className="p-4 bg-[var(--pg-warning-subtle)] border border-[var(--pg-border-default)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs"
         >
           <div className="space-y-1">
@@ -217,8 +294,8 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
             >
               Replace current modified source code with "{pendingSnippetConfirm.label}"?
             </div>
-            <p className="text-[var(--pg-text-secondary)]">
-              You have unsaved edits in the code editor. Confirm before overwriting your input.
+            <p id="overwrite-confirm-desc" className="text-[var(--pg-text-secondary)]">
+              You have unsaved edits in the code editor. Confirm before overwriting your input (or press Esc to cancel).
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -259,7 +336,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-mono font-semibold text-[var(--pg-danger)]">
-              ANALYSIS REQUEST FAILED · {apiError.category}
+              ✕ Analysis Request Failed · {apiError.category}
             </div>
             <span className="font-mono text-[11px] text-[var(--pg-text-muted)]">
               Request ID: {apiError.requestId}
@@ -305,35 +382,45 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
         <div className="lg:col-span-8 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] flex flex-col">
           {/* File Tabs & Add File Button */}
           <div className="px-3 py-2 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2 overflow-x-auto">
-            <div className="flex items-center gap-1">
-              {files.map((file, idx) => (
-                <div
-                  key={file.id}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono border transition-colors ${
-                    idx === activeFileIdx
-                      ? 'bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] border-[var(--pg-border-strong)]'
-                      : 'bg-transparent text-[var(--pg-text-secondary)] border-transparent hover:bg-[var(--pg-bg-interactive)]'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setActiveFileIdx(idx)}
-                    className="cursor-pointer whitespace-nowrap"
+            <div className="flex items-center gap-1" role="tablist" aria-label="Source files in review">
+              {files.map((file, idx) => {
+                const isSelected = idx === activeFileIdx;
+                const lineCount = file.content.split(/\r?\n/).length;
+                return (
+                  <div
+                    key={file.id}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono border transition-colors ${
+                      isSelected
+                        ? 'bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] border-[var(--pg-border-strong)] font-semibold'
+                        : 'bg-transparent text-[var(--pg-text-secondary)] border-transparent hover:bg-[var(--pg-bg-interactive)]'
+                    }`}
                   >
-                    {file.filename || `untitled_${idx + 1}`}
-                  </button>
-                  {files.length > 1 && (
                     <button
                       type="button"
-                      onClick={() => handleRemoveFile(idx)}
-                      aria-label={`Remove file ${file.filename}`}
-                      className="text-[var(--pg-text-muted)] hover:text-[var(--pg-danger)] cursor-pointer"
+                      role="tab"
+                      aria-selected={isSelected}
+                      onClick={() => setActiveFileIdx(idx)}
+                      className="cursor-pointer whitespace-nowrap"
                     >
-                      ×
+                      {file.filename || `untitled_${idx + 1}`}{' '}
+                      <span className="text-[10px] text-[var(--pg-text-muted)] font-normal">
+                        ({lineCount}L)
+                      </span>
                     </button>
-                  )}
-                </div>
-              ))}
+                    {files.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFile(idx)}
+                        aria-label={`Remove file ${file.filename}`}
+                        title={`Remove ${file.filename}`}
+                        className="px-1 text-[var(--pg-text-muted)] hover:text-[var(--pg-danger)] cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             <button
@@ -353,7 +440,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 htmlFor="review-filename-input"
                 className="block font-mono text-[11px] text-[var(--pg-text-secondary)] mb-1"
               >
-                FILENAME / PATH
+                Filename / Repository Path
               </label>
               <input
                 id="review-filename-input"
@@ -361,7 +448,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 value={activeFile.filename}
                 onChange={(e) => handleUpdateActiveFile({ filename: e.target.value })}
                 placeholder="e.g. src/ledger/payoutController.ts"
-                className="w-full px-3 py-1.5 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="w-full px-3 py-1.5 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:border-[var(--pg-accent)]"
               />
             </div>
 
@@ -370,7 +457,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 htmlFor="review-language-select"
                 className="block font-mono text-[11px] text-[var(--pg-text-secondary)] mb-1"
               >
-                LANGUAGE
+                Language
               </label>
               <select
                 id="review-language-select"
@@ -380,7 +467,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                     language: e.target.value as SupportedLanguage,
                   })
                 }
-                className="w-full px-3 py-1.5 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+                className="w-full px-3 py-1.5 text-xs font-mono bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:border-[var(--pg-accent)]"
               >
                 <option value="typescript">TypeScript</option>
                 <option value="javascript">JavaScript</option>
@@ -392,11 +479,12 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
           </div>
 
           {/* Line-Numbered Code Input Surface */}
-          <div className="relative flex bg-[var(--pg-bg-code)] min-h-[380px] max-h-[540px] overflow-auto">
+          <div className="relative flex bg-[var(--pg-bg-code)] h-[420px] sm:h-[480px] overflow-hidden">
             {/* Synchronized Line Numbers Gutter */}
             <div
+              ref={gutterRef}
               aria-hidden="true"
-              className="w-12 py-3 px-2 bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-subtle)] font-mono text-[12px] leading-[1.6] text-right text-[var(--pg-text-muted)] select-none tabular-nums shrink-0"
+              className="w-12 py-3 px-2 bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-subtle)] font-mono text-[12.5px] leading-[1.65] text-right text-[var(--pg-text-muted)] select-none tabular-nums shrink-0 overflow-hidden"
             >
               {activeLines.map((_, i) => (
                 <div key={i}>{i + 1}</div>
@@ -405,18 +493,22 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
 
             <textarea
               id="source-code-textarea"
-              aria-label={`Source code for ${activeFile.filename}`}
+              aria-label={`Source code editor for ${activeFile.filename}`}
               value={activeFile.content}
               onChange={(e) => handleUpdateActiveFile({ content: e.target.value })}
+              onScroll={(e) => {
+                if (gutterRef.current) {
+                  gutterRef.current.scrollTop = e.currentTarget.scrollTop;
+                }
+              }}
               spellCheck={false}
-              rows={Math.max(18, activeLines.length + 2)}
-              className="flex-1 p-3 bg-transparent font-mono text-[12.5px] leading-[1.6] text-[var(--pg-text-primary)] focus:outline-none resize-y whitespace-pre overflow-x-auto"
+              className="flex-1 p-3 bg-transparent font-mono text-[12.5px] leading-[1.65] text-[var(--pg-text-primary)] focus:outline-none resize-none whitespace-pre overflow-auto"
             />
           </div>
 
-          <div className="px-3 py-2 border-t border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between text-[11px] font-mono text-[var(--pg-text-muted)]">
+          <div className="px-3 py-2 border-t border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--pg-text-muted)]">
             <span>
-              Deterministic static rules available for TypeScript, JavaScript, Python, Java, and SQL
+              Deterministic static rules active for TypeScript, JavaScript, Python, Java, and SQL
             </span>
             <span className="tabular-nums">
               {activeLines.length} lines · {activeFile.content.length} chars
@@ -431,7 +523,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
               htmlFor="review-title-input"
               className="block font-mono text-[11px] text-[var(--pg-text-secondary)] mb-1"
             >
-              REVIEW IDENTIFIER / PR TITLE
+              Review Identifier / PR Title
             </label>
             <input
               id="review-title-input"
@@ -442,7 +534,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 setIsDirty(true);
               }}
               placeholder="e.g. PR #418: Settle multi-tenant merchant payouts"
-              className="w-full px-3 py-1.5 text-xs bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)]"
+              className="w-full px-3 py-1.5 text-xs bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:border-[var(--pg-accent)]"
             />
           </div>
 
@@ -452,7 +544,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
               htmlFor="review-objective-input"
               className="block font-mono text-[11px] text-[var(--pg-text-secondary)]"
             >
-              REVIEW OBJECTIVE (SHAPES ANALYSIS PROMPT)
+              Review Objective (Shapes Analysis Prompt)
             </label>
             <textarea
               id="review-objective-input"
@@ -463,18 +555,22 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 setIsDirty(true);
               }}
               placeholder="Describe what you want investigated..."
-              className="w-full p-2.5 text-xs bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:outline-none focus:border-[var(--pg-accent)] leading-relaxed"
+              className="w-full p-2.5 text-xs bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] focus:border-[var(--pg-accent)] leading-relaxed"
             />
             <div className="space-y-1">
               <div className="font-mono text-[10px] text-[var(--pg-text-muted)]">
-                QUICK OBJECTIVE TEMPLATES:
+                Quick Objective Templates:
               </div>
               <div className="flex flex-wrap gap-1">
                 {OBJECTIVE_PRESETS.map((preset, idx) => (
                   <button
                     key={idx}
                     type="button"
-                    onClick={() => setObjective(preset)}
+                    onClick={() => {
+                      setObjective(preset);
+                      setIsDirty(true);
+                    }}
+                    title={preset}
                     className="px-2 py-0.5 text-[11px] bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)] hover:border-[var(--pg-border-default)] text-left cursor-pointer"
                   >
                     {preset.slice(0, 38)}...
@@ -487,16 +583,17 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
           {/* Selected Analysis Focus Categories */}
           <div className="space-y-2">
             <div className="flex items-center justify-between font-mono text-[11px] text-[var(--pg-text-secondary)]">
-              <span>SELECTED ANALYSIS FOCUS ({focusAreas.length})</span>
+              <span>Selected Focus Categories ({focusAreas.length})</span>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  setValidationError(null);
                   setFocusAreas(
                     focusAreas.length === ALL_FOCUS_AREAS.length
                       ? ['security', 'concurrency']
                       : ALL_FOCUS_AREAS.map((a) => a.id)
-                  )
-                }
+                  );
+                }}
                 className="text-[var(--pg-info)] hover:underline cursor-pointer"
               >
                 {focusAreas.length === ALL_FOCUS_AREAS.length ? 'Reset Focus' : 'Select All'}
@@ -522,8 +619,12 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                       <div className="text-xs font-medium">{area.label}</div>
                       <div className="text-[11px] text-[var(--pg-text-muted)]">{area.hint}</div>
                     </div>
-                    <span className="font-mono text-xs">
-                      {active ? '✓ ACTIVE' : 'OFF'}
+                    <span
+                      className={`font-mono text-xs shrink-0 ${
+                        active ? 'text-[var(--pg-accent-text)] font-semibold' : ''
+                      }`}
+                    >
+                      {active ? '✓ Active' : 'Off'}
                     </span>
                   </button>
                 );
@@ -531,13 +632,13 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
             </div>
           </div>
 
-          {/* Analysis Pipeline Mode */}
-          <div className="space-y-1.5">
+          {/* Analysis Pipeline Mode with Clear Explanation */}
+          <div className="space-y-2">
             <label
               htmlFor="analysis-pipeline-mode"
               className="block font-mono text-[11px] text-[var(--pg-text-secondary)]"
             >
-              ANALYSIS PIPELINE ENGINE MODE
+              Analysis Pipeline Engine Mode
             </label>
             <select
               id="analysis-pipeline-mode"
@@ -557,6 +658,15 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                 Gemini 3.1 Flash Lite Semantic Reasoning Only
               </option>
             </select>
+
+            <div className="p-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] text-[11px] space-y-1">
+              <div className="font-mono font-semibold text-[var(--pg-text-primary)]">
+                {modeDescriptions[analysisMode].title}
+              </div>
+              <p className="text-[var(--pg-text-secondary)] leading-relaxed">
+                {modeDescriptions[analysisMode].detail}
+              </p>
+            </div>
           </div>
 
           {/* Active Request Scope & Stage Configuration (Only shown while request is in flight) */}
@@ -569,7 +679,7 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
               <div className="flex items-center gap-2 text-[var(--pg-accent-text)] font-semibold">
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                 <span>
-                  REQUEST IN FLIGHT · POST /api/review ({submittingMode.toUpperCase()})
+                  Request In Flight · POST /api/review ({submittingMode.toUpperCase()})
                 </span>
               </div>
               <div className="space-y-1 text-[11px] text-[var(--pg-text-secondary)]">
@@ -577,28 +687,27 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
                   1. Deterministic Static Analysis:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
                     {submittingMode === 'ai-only'
-                      ? 'SKIPPED BY MODE'
-                      : 'INCLUDED IN REQUEST (pg-static-ast-1.4.2)'}
+                      ? 'Skipped by Mode'
+                      : 'Active (pg-static-ast-1.4.2)'}
                   </strong>
                 </div>
                 <div>
                   2. Gemini AI Semantic Analysis:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
                     {submittingMode === 'static-only'
-                      ? 'SKIPPED BY MODE'
-                      : 'INCLUDED IN REQUEST (gemini-3.1-flash-lite)'}
+                      ? 'Skipped by Mode'
+                      : 'Active (gemini-3.1-flash-lite)'}
                   </strong>
                 </div>
                 <div>
                   3. Evidence Corroboration & Line Verification:{' '}
                   <strong className="text-[var(--pg-text-primary)]">
-                    INCLUDED IN REQUEST
+                    Active
                   </strong>
                 </div>
               </div>
               <div className="pt-1 border-t border-[var(--pg-border-subtle)] text-[10.5px] text-[var(--pg-text-muted)] leading-relaxed">
-                Telemetry Note: /api/review executes as a single HTTP request; exact per-stage
-                duration, retry count, and completion status are recorded once the response
+                Note: Analysis stages are only marked succeeded or failed after the server response
                 returns.
               </div>
             </div>
@@ -628,3 +737,4 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     </div>
   );
 };
+

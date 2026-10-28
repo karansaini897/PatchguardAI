@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ApiErrorCategory,
   DiagnosticEvent,
@@ -8,11 +8,7 @@ import {
 } from '../types/patchguard';
 import { executeCodeReview, probeAiConnectivity } from '../lib/apiClient';
 import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
   Download,
-  Loader2,
   Moon,
   RefreshCw,
   Sun,
@@ -83,6 +79,18 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
   const [simulatedErrorResult, setSimulatedErrorResult] = useState<StructuredApiError | null>(null);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [confirmClearReviews, setConfirmClearReviews] = useState<boolean>(false);
+  const [expandedDiagnosticId, setExpandedDiagnosticId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmClearReviews) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setConfirmClearReviews(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmClearReviews]);
 
   const handleRunLiveAiProbe = async () => {
     setIsProbingAi(true);
@@ -128,7 +136,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
   };
 
   return (
-    <div className="max-w-[1360px] mx-auto px-6 py-6 space-y-8">
+    <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-6 space-y-8">
       {/* Page Header */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -151,7 +159,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
 
       {/* Section 10: Verifiable System Health Matrix */}
       <section aria-label="Verifiable system health matrix" className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
             01 · Verifiable Subsystem Health (Configuration vs. Live Connectivity)
           </h2>
@@ -209,7 +217,11 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                       : 'text-[var(--pg-text-secondary)]'
                   }
                 >
-                  {health?.aiConnectivityState.toUpperCase() || 'UNVERIFIED'}
+                  {health?.aiConnectivityState === 'verified'
+                    ? '✓ VERIFIED'
+                    : health?.aiConnectivityState === 'failed'
+                    ? '✕ FAILED'
+                    : '○ UNVERIFIED'}
                 </strong>
               </div>
             </div>
@@ -257,8 +269,26 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
         </div>
 
         {(probeMessage || health?.aiConnectivityMessage) && (
-          <div className="px-4 py-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] font-mono text-xs text-[var(--pg-text-secondary)]">
-            AI Connectivity Status: {probeMessage || health?.aiConnectivityMessage}
+          <div
+            role="status"
+            className={`px-4 py-2.5 border font-mono text-xs ${
+              health?.aiConnectivityState === 'verified'
+                ? 'bg-[var(--pg-success-subtle)] border-[var(--pg-border-default)] text-[var(--pg-success)]'
+                : health?.aiConnectivityState === 'failed'
+                ? 'bg-[var(--pg-warning-subtle)] border-[var(--pg-border-default)] text-[var(--pg-warning)]'
+                : 'bg-[var(--pg-bg-workspace)] border-[var(--pg-border-default)] text-[var(--pg-text-secondary)]'
+            }`}
+          >
+            <strong className="mr-1.5">
+              {health?.aiConnectivityState === 'verified'
+                ? '✓ AI Connectivity Verified:'
+                : health?.aiConnectivityState === 'failed'
+                ? '△ AI Connectivity Probe Warning:'
+                : '○ AI Connectivity Status:'}
+            </strong>
+            <span className="text-[var(--pg-text-primary)]">
+              {probeMessage || health?.aiConnectivityMessage}
+            </span>
           </div>
         )}
       </section>
@@ -358,7 +388,7 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                     onClick={() => setConfirmClearReviews(false)}
                     className="px-3 py-1.5 font-mono text-xs border border-[var(--pg-border-default)] cursor-pointer"
                   >
-                    Cancel
+                    Cancel (Esc)
                   </button>
                 </div>
               )}
@@ -426,14 +456,14 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
 
       {/* Section 10.1 Diagnostics Details Table */}
       <section className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]">
-        <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
               05 · Sanitized Request & Analysis Diagnostics Ledger ({diagnostics.length})
             </h2>
             <p className="text-xs text-[var(--pg-text-secondary)]">
               Records request identifiers, analysis stages, durations, and normalized error
-              categories. Secrets and raw stack traces are stripped at the boundary.
+              categories. Click any request ID to expand untruncated diagnostic details.
             </p>
           </div>
           {diagnostics.length > 0 && (
@@ -467,41 +497,79 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--pg-border-subtle)] text-[11px]">
-                {diagnostics.map((d) => (
-                  <tr key={d.id} className="hover:bg-[var(--pg-bg-workspace)]">
-                    <td className="py-2 px-3 text-[var(--pg-text-muted)] tabular-nums whitespace-nowrap">
-                      {new Date(d.timestamp).toLocaleTimeString()}
-                    </td>
-                    <td className="py-2 px-3 text-[var(--pg-info)] whitespace-nowrap">
-                      {d.requestId}
-                    </td>
-                    <td className="py-2 px-3 text-[var(--pg-text-secondary)] whitespace-nowrap">
-                      {d.reviewId || '—'}
-                    </td>
-                    <td className="py-2 px-3 text-[var(--pg-text-secondary)] whitespace-nowrap">
-                      {d.stage} ({d.endpoint})
-                    </td>
-                    <td className="py-2 px-3 whitespace-nowrap">
-                      <span
-                        className={
-                          d.status === 'succeeded'
-                            ? 'text-[var(--pg-success)]'
-                            : d.status === 'warning'
-                            ? 'text-[var(--pg-warning)]'
-                            : 'text-[var(--pg-danger)]'
-                        }
-                      >
-                        {d.status.toUpperCase()} (HTTP {d.statusCode})
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-right tabular-nums text-[var(--pg-text-primary)] whitespace-nowrap">
-                      {d.durationMs}ms
-                    </td>
-                    <td className="py-2 px-3 text-[var(--pg-text-secondary)] max-w-[400px] truncate" title={d.message}>
-                      {d.message}
-                    </td>
-                  </tr>
-                ))}
+                {diagnostics.map((d) => {
+                  const isExpanded = expandedDiagnosticId === d.id;
+                  return (
+                    <React.Fragment key={d.id}>
+                      <tr className="hover:bg-[var(--pg-bg-workspace)]">
+                        <td className="py-2 px-3 text-[var(--pg-text-muted)] tabular-nums whitespace-nowrap">
+                          {new Date(d.timestamp).toLocaleTimeString()}
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            onClick={() =>
+                              setExpandedDiagnosticId(isExpanded ? null : d.id)
+                            }
+                            title="Click to expand full untruncated diagnostic payload"
+                            className="text-[var(--pg-info)] hover:underline cursor-pointer"
+                          >
+                            {d.requestId}
+                          </button>
+                        </td>
+                        <td className="py-2 px-3 text-[var(--pg-text-secondary)] whitespace-nowrap">
+                          {d.reviewId || '—'}
+                        </td>
+                        <td className="py-2 px-3 text-[var(--pg-text-secondary)] whitespace-nowrap">
+                          {d.stage} ({d.endpoint})
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <span
+                            className={
+                              d.status === 'succeeded'
+                                ? 'text-[var(--pg-success)]'
+                                : d.status === 'warning'
+                                ? 'text-[var(--pg-warning)]'
+                                : 'text-[var(--pg-danger)]'
+                            }
+                          >
+                            {d.status.toUpperCase()} (HTTP {d.statusCode})
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-right tabular-nums text-[var(--pg-text-primary)] whitespace-nowrap">
+                          {d.durationMs}ms
+                        </td>
+                        <td
+                          className="py-2 px-3 text-[var(--pg-text-secondary)] max-w-[400px] truncate cursor-pointer"
+                          title={d.message}
+                          onClick={() => setExpandedDiagnosticId(isExpanded ? null : d.id)}
+                        >
+                          {d.message}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-[var(--pg-bg-workspace)] text-[var(--pg-text-secondary)]">
+                          <td colSpan={7} className="p-3 space-y-1">
+                            <div>
+                              Full Request ID: {d.requestId} · Timestamp:{' '}
+                              {new Date(d.timestamp).toISOString()} · Stage: {d.stage} (
+                              {d.endpoint})
+                            </div>
+                            {d.errorCategory && (
+                              <div className="text-[var(--pg-warning)]">
+                                Normalized Error Category: {d.errorCategory} (HTTP {d.statusCode})
+                              </div>
+                            )}
+                            <div className="text-[var(--pg-text-primary)] break-words">
+                              Message: {d.message}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -101,6 +101,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
   }, [commands, query]);
 
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       setQuery('');
@@ -121,6 +123,23 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
+      return;
+    }
+    if (e.key === 'Tab' && dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'input, button:not([disabled])'
+      );
+      if (focusable.length > 0) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -148,10 +167,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-24 px-4"
+      className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-16 sm:pt-24 px-3 sm:px-4"
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="PatchGuard Command Palette"
@@ -160,7 +180,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         className="w-full max-w-xl border border-[var(--pg-border-strong)] bg-[var(--pg-bg-surface)] shadow-2xl overflow-hidden"
       >
         {/* Search Input Header */}
-        <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center gap-3">
+        <div className="px-3 sm:px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center gap-2.5 sm:gap-3">
           <Search className="w-4 h-4 text-[var(--pg-text-muted)] shrink-0" />
           <input
             ref={inputRef}
@@ -169,12 +189,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             placeholder="Type a command or jump to workspace..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent text-xs font-mono text-[var(--pg-text-primary)] placeholder:text-[var(--pg-text-muted)] focus:outline-none"
+            className="flex-1 bg-transparent text-xs font-mono text-[var(--pg-text-primary)] placeholder:text-[var(--pg-text-muted)] focus:outline-none min-w-0"
           />
           <button
             type="button"
             onClick={onClose}
-            className="px-1.5 py-0.5 text-[10px] font-mono border border-[var(--pg-border-default)] text-[var(--pg-text-muted)] hover:text-[var(--pg-text-primary)] cursor-pointer"
+            className="px-1.5 py-0.5 text-[10px] font-mono border border-[var(--pg-border-default)] text-[var(--pg-text-muted)] hover:text-[var(--pg-text-primary)] cursor-pointer shrink-0"
           >
             ESC
           </button>
@@ -198,14 +218,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                     cmd.action();
                     onClose();
                   }}
-                  className={`w-full text-left px-4 py-2.5 flex items-center justify-between gap-4 text-xs transition-colors cursor-pointer ${
+                  className={`w-full text-left px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 sm:gap-4 text-xs transition-colors cursor-pointer ${
                     isSelected
                       ? 'bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)]'
                       : 'text-[var(--pg-text-primary)] hover:bg-[var(--pg-bg-workspace)]'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="font-mono text-[10px] text-[var(--pg-text-muted)] uppercase w-28 shrink-0">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2.5 min-w-0">
+                    <span className="font-mono text-[10px] text-[var(--pg-text-muted)] uppercase sm:w-28 shrink-0">
                       {cmd.category}
                     </span>
                     <span className="font-medium truncate">{cmd.label}</span>
@@ -222,7 +242,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2 border-t border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between font-mono text-[11px] text-[var(--pg-text-muted)]">
+        <div className="px-3 sm:px-4 py-2 border-t border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-[var(--pg-text-muted)]">
           <span>↑↓ to navigate · Enter to execute · Esc to dismiss</span>
           <span>Cmd/Ctrl + K</span>
         </div>

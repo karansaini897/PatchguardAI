@@ -89,6 +89,17 @@
     font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-variant-numeric: tabular-nums;
   }
+
+  button:focus-visible,
+  a:focus-visible,
+  select:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  [role="button"]:focus-visible,
+  [role="separator"]:focus-visible {
+    outline: 2px solid var(--pg-accent);
+    outline-offset: 2px;
+  }
 }
 
 .tabular-nums {
@@ -123,3 +134,4 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--pg-border-strong);
 }
+

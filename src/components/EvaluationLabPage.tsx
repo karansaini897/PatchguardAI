@@ -200,10 +200,10 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto px-6 py-6 space-y-6">
+    <div className="max-w-[1400px] w-full mx-auto px-3 sm:px-6 py-6 space-y-6 overflow-x-hidden">
       {/* Header & Suite Execution Controls */}
       <div className="border-b border-[var(--pg-border-default)] pb-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <div className="font-mono text-xs text-[var(--pg-text-muted)]">
             EVALUATION LAB · EMPIRICAL DEFECT DETECTION & FALSE-POSITIVE VERIFICATION
           </div>
@@ -217,12 +217,12 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 max-w-full min-w-0">
           <select
             aria-label="Evaluation engine mode"
             value={evalEngineMode}
             onChange={(e) => setEvalEngineMode(e.target.value as 'hybrid' | 'static-only')}
-            className="px-3 py-2 text-xs font-mono bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+            className="max-w-full min-w-0 px-3 py-2 text-xs font-mono bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] truncate"
           >
             <option value="hybrid">Engine: Hybrid (Static + Gemini 3.1 Flash Lite)</option>
             <option value="static-only">Engine: Deterministic Static Analyzer Only</option>
@@ -348,7 +348,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
       {/* 9.1 Three-Zone Evaluation Layout: Suite Nav (3) | Central Results Table (5) | Case Detail Inspector (4) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Zone (3 cols): Test-Suite Navigation & Metric Definitions */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="lg:col-span-3 space-y-4 min-w-0">
           <div className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]">
             <div className="px-3.5 py-2.5 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] font-mono text-[11px] font-semibold text-[var(--pg-text-secondary)]">
               TEST SUITES ({suites.length})
@@ -423,7 +423,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
         </div>
 
         {/* Center Zone (5 cols): Test Cases & Measured Results Table */}
-        <div className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]">
+        <div className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] min-w-0">
           <div className="px-4 py-2.5 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between font-mono text-[11px] text-[var(--pg-text-secondary)]">
             <span>CURATED TEST CASES ({visibleCases.length})</span>
             <span>STATUS / TP·FP·FN</span>
@@ -443,10 +443,19 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
               return (
                 <div
                   key={tc.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
                   onClick={() => setSelectedCaseId(tc.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedCaseId(tc.id);
+                    }
+                  }}
                   className={`p-3.5 transition-colors cursor-pointer ${
                     isSelected
-                      ? 'bg-[var(--pg-bg-elevated)]'
+                      ? 'bg-[var(--pg-bg-elevated)] ring-1 ring-inset ring-[var(--pg-border-strong)]'
                       : 'bg-[var(--pg-bg-surface)] hover:bg-[var(--pg-bg-workspace)]'
                   }`}
                 >
@@ -456,6 +465,10 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                     </span>
                     {!run ? (
                       <span className="text-[var(--pg-text-muted)]">○ UNEXECUTED</span>
+                    ) : run.status === 'failed' ? (
+                      <span className="text-[var(--pg-danger)] font-semibold">
+                        ✕ EXECUTION FAILED
+                      </span>
                     ) : matchedAllExpectations ? (
                       <span className="text-[var(--pg-success)] font-semibold">
                         ✓ MATCHED EXPECTATIONS
@@ -498,7 +511,7 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
         </div>
 
         {/* Right Zone (4 cols): 9.2 Selected Test-Case Detail Inspector */}
-        <div className="lg:col-span-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]">
+        <div className="lg:col-span-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] min-w-0">
           <div className="px-4 py-2.5 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between font-mono text-[11px] text-[var(--pg-text-secondary)]">
             <span>TEST-CASE INSPECTOR</span>
             <span>{selectedCase?.id}</span>
@@ -609,26 +622,85 @@ export const EvaluationLabPage: React.FC<EvaluationLabPageProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-2 font-mono text-[11px]">
-                    <div className="flex items-center justify-between">
-                      <ReviewStatusLabel status={selectedCase.lastRunResult.status} />
-                      <span className="text-[var(--pg-text-muted)] tabular-nums">
-                        {selectedCase.lastRunResult.durationMs}ms · Req:{' '}
-                        {selectedCase.lastRunResult.requestId}
-                      </span>
+                  <div className="space-y-2.5">
+                    <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-2 font-mono text-[11px]">
+                      <div className="flex items-center justify-between">
+                        <ReviewStatusLabel status={selectedCase.lastRunResult.status} />
+                        <span className="text-[var(--pg-text-muted)] tabular-nums">
+                          {selectedCase.lastRunResult.durationMs}ms · Req:{' '}
+                          {selectedCase.lastRunResult.requestId}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 pt-1 text-[var(--pg-text-primary)] tabular-nums">
+                        <div>TP: {selectedCase.lastRunResult.truePositives}</div>
+                        <div>FP: {selectedCase.lastRunResult.falsePositives}</div>
+                        <div>FN: {selectedCase.lastRunResult.falseNegatives}</div>
+                      </div>
+                      <div className="text-[var(--pg-text-secondary)]">
+                        Precision:{' '}
+                        {formatRatio(selectedCase.lastRunResult.precision, '0 detections')} ·
+                        Recall: {formatRatio(selectedCase.lastRunResult.recall, '0 expected')}
+                      </div>
+                      <div className="text-[var(--pg-text-muted)]">
+                        Engines:{' '}
+                        {selectedCase.lastRunResult.analysisSourcesUsed.join(', ') || 'None'}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 pt-1 text-[var(--pg-text-primary)] tabular-nums">
-                      <div>TP: {selectedCase.lastRunResult.truePositives}</div>
-                      <div>FP: {selectedCase.lastRunResult.falsePositives}</div>
-                      <div>FN: {selectedCase.lastRunResult.falseNegatives}</div>
-                    </div>
-                    <div className="text-[var(--pg-text-secondary)]">
-                      Precision:{' '}
-                      {formatRatio(selectedCase.lastRunResult.precision, '0 detections')} · Recall:{' '}
-                      {formatRatio(selectedCase.lastRunResult.recall, '0 expected')}
-                    </div>
-                    <div className="text-[var(--pg-text-muted)]">
-                      Engines: {selectedCase.lastRunResult.analysisSourcesUsed.join(', ') || 'None'}
+
+                    {selectedCase.lastRunResult.errorDetails && (
+                      <div className="p-2.5 bg-[var(--pg-danger-subtle)] border border-[var(--pg-border-default)] font-mono text-[11px] space-y-1">
+                        <div className="font-semibold text-[var(--pg-danger)]">
+                          [{selectedCase.lastRunResult.errorDetails.category}]{' '}
+                          {selectedCase.lastRunResult.errorDetails.message}
+                        </div>
+                        <div className="text-[var(--pg-text-secondary)]">
+                          Remediation: {selectedCase.lastRunResult.errorDetails.remediationStep}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Actual Detected Findings Breakdown (TP vs FP) */}
+                    <div className="space-y-1.5">
+                      <div className="font-mono text-[11px] text-[var(--pg-text-secondary)]">
+                        DETECTED FINDINGS IN RUN (
+                        {selectedCase.lastRunResult.detectedFindings.length})
+                      </div>
+                      {selectedCase.lastRunResult.detectedFindings.length === 0 ? (
+                        <div className="p-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] font-mono text-[11px] text-[var(--pg-text-muted)]">
+                          0 findings reported by the analysis pipeline for this benchmark case.
+                        </div>
+                      ) : (
+                        selectedCase.lastRunResult.detectedFindings.map((f) => {
+                          const isFp =
+                            selectedCase.lastRunResult?.falsePositiveFindingIds.includes(f.id);
+                          return (
+                            <div
+                              key={f.id}
+                              className="p-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-1 font-mono text-[11px]"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <SeverityLabel severity={f.severity} compact />
+                                {isFp ? (
+                                  <span className="text-[var(--pg-warning)] font-semibold">
+                                    △ False Positive (FP)
+                                  </span>
+                                ) : (
+                                  <span className="text-[var(--pg-success)] font-semibold">
+                                    ✓ True Positive (TP)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-sans font-semibold text-[var(--pg-text-primary)]">
+                                {f.title}
+                              </div>
+                              <div className="text-[var(--pg-text-muted)] tabular-nums">
+                                L{f.location.startLine}–L{f.location.endLine} ·{' '}
+                                {f.staticCorroboration?.ruleId || f.analysisSource}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 )}

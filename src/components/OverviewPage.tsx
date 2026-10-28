@@ -29,6 +29,7 @@ interface OverviewPageProps {
   onLoadIsolatedDemo: () => void;
   onOpenEvaluationLab: () => void;
   onOpenDiagnostics: () => void;
+  onOpenHistory?: () => void;
 }
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({
@@ -39,6 +40,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onLoadIsolatedDemo,
   onOpenEvaluationLab,
   onOpenDiagnostics,
+  onOpenHistory,
 }) => {
   // Compute real activity metrics strictly from stored records
   const activityMetrics = useMemo(() => {
@@ -89,15 +91,46 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       .slice(0, 8);
   }, [reviews]);
 
+  const aiStatusDisplay = useMemo(() => {
+    if (!health) {
+      return {
+        label: 'Checking...',
+        colorClass: 'text-[var(--pg-text-muted)]',
+      };
+    }
+    if (health.aiConnectivityState === 'verified') {
+      return {
+        label: 'Live Connectivity Verified',
+        colorClass: 'text-[var(--pg-success)]',
+      };
+    }
+    if (health.aiConnectivityState === 'failed') {
+      return {
+        label: 'Live Probe Failed (Static Fallback Active)',
+        colorClass: 'text-[var(--pg-warning)]',
+      };
+    }
+    if (health.aiProviderConfigured) {
+      return {
+        label: 'Key Configured (Connectivity Unprobed)',
+        colorClass: 'text-[var(--pg-text-primary)]',
+      };
+    }
+    return {
+      label: 'Not Configured (Static Mode Active)',
+      colorClass: 'text-[var(--pg-warning)]',
+    };
+  }, [health]);
+
   return (
-    <div className="max-w-[1360px] mx-auto px-6 py-8 space-y-8">
+    <div className="max-w-[1360px] w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
       {/* 6.1 Opening Composition */}
       <section className="border-b border-[var(--pg-border-default)] pb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-6">
         <div className="space-y-2 max-w-3xl">
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-[var(--pg-text-secondary)]">
-            <span>PATCHGUARD AI WORKSPACE</span>
+            <span>PatchGuard AI Workspace</span>
             <span aria-hidden="true">·</span>
-            <span>DEFECT INVESTIGATION & QUALITY INTELLIGENCE</span>
+            <span>Defect Investigation & Evidence Verification</span>
           </div>
           <h1
             className="text-2xl sm:text-3xl font-semibold tracking-tight text-[var(--pg-text-primary)]"
@@ -132,54 +165,48 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         </div>
       </section>
 
-      {/* Verifiable System & Persistence Telemetry Strip */}
+      {/* Verifiable System & Persistence Status Strip */}
       <section
         aria-label="Verifiable system configuration state"
-        className="px-4 py-2.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-4 text-xs font-mono"
+        className="px-4 py-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs font-mono"
       >
-        <div className="flex flex-wrap items-center gap-3 text-[var(--pg-text-secondary)]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[var(--pg-text-secondary)]">
           <span>
-            Backend:{' '}
+            API Server:{' '}
             <strong
               className={
-                health?.backendReachable ? 'text-[var(--pg-success)]' : 'text-[var(--pg-danger)]'
-              }
-            >
-              {health ? (health.backendReachable ? `Reachable (${health.backendLatencyMs}ms)` : 'Unreachable') : 'Checking...'}
-            </strong>
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            Static Engine:{' '}
-            <strong className="text-[var(--pg-info)]">
-              {health?.staticEngineVersion || 'pg-static-ast-1.4.2'}
-            </strong>
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            AI Provider ({health?.aiModelId || 'gemini-3.1-flash-lite'}):{' '}
-            <strong
-              className={
-                health?.aiConnectivityState === 'verified'
+                !health
+                  ? 'text-[var(--pg-text-muted)]'
+                  : health.backendReachable
                   ? 'text-[var(--pg-success)]'
-                  : health?.aiProviderConfigured
-                  ? 'text-[var(--pg-text-primary)]'
-                  : 'text-[var(--pg-warning)]'
+                  : 'text-[var(--pg-danger)]'
               }
             >
-              {health?.aiConnectivityState === 'verified'
-                ? 'Connectivity Verified'
-                : health?.aiProviderConfigured
-                ? 'Key Present (Connectivity Unprobed)'
-                : 'Key Unset (Static Mode Active)'}
+              {health
+                ? health.backendReachable
+                  ? `✓ Online (${health.backendLatencyMs}ms)`
+                  : '✕ Unreachable'
+                : '⋯ Checking'}
             </strong>
           </span>
           <span aria-hidden="true">·</span>
           <span>
-            Persistence:{' '}
+            Static Analyzer:{' '}
+            <strong className="text-[var(--pg-info)]">
+              ✓ Ready ({health?.staticEngineVersion || 'pg-static-ast-1.4.2'})
+            </strong>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            Gemini AI ({health?.aiModelId || 'gemini-3.1-flash-lite'}):{' '}
+            <strong className={aiStatusDisplay.colorClass}>{aiStatusDisplay.label}</strong>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            Storage:{' '}
             <strong className="text-[var(--pg-text-primary)]">
               {health?.persistenceMode === 'browser-local-storage'
-                ? 'Browser localStorage (Local Device)'
+                ? 'Browser Local Storage'
                 : 'Session Memory Fallback'}
             </strong>
           </span>
@@ -188,9 +215,41 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         <button
           type="button"
           onClick={onOpenDiagnostics}
-          className="text-[var(--pg-info)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+          className="text-[var(--pg-info)] hover:underline whitespace-nowrap shrink-0 self-start md:self-auto cursor-pointer"
         >
           System Diagnostics & Probe →
+        </button>
+      </section>
+
+      {/* Isolated Demonstration Record Callout (Always clearly distinguished from stored user reviews) */}
+      <section
+        aria-label="Demonstration review overview"
+        className="px-4 py-3 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs"
+      >
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 font-mono">
+            <span className="text-[var(--pg-info)] font-semibold">[DEMONSTRATION RECORD]</span>
+            <span className="text-[var(--pg-text-primary)] font-semibold">
+              PR #418: Settle multi-tenant merchant payouts & batch reconciliation
+            </span>
+            <span className="text-[var(--pg-text-muted)]">·</span>
+            <span className="text-[var(--pg-text-secondary)] tabular-nums">
+              8 Static Findings · 2 Files · 12ms
+            </span>
+          </div>
+          <p className="text-[var(--pg-text-secondary)] leading-relaxed">
+            Pre-computed static analysis demonstration for exploring the three-pane workspace,
+            source-line highlighting, and CWE-89 SQL injection evidence. Kept strictly isolated from
+            your local review ledger and metrics below.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onLoadIsolatedDemo}
+          className="px-3 py-1.5 font-mono text-xs border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] whitespace-nowrap shrink-0 self-start sm:self-center cursor-pointer"
+        >
+          Open Demo in Workspace →
         </button>
       </section>
 
@@ -198,20 +257,20 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       {reviews.length === 0 ? (
         <section
           aria-label="First-use onboarding workspace"
-          className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-6 sm:p-8 space-y-6"
+          className="border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-5 sm:p-8 space-y-6"
         >
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6 border-b border-[var(--pg-border-subtle)] pb-6">
             <div className="space-y-2 max-w-2xl">
               <div className="font-mono text-xs text-[var(--pg-accent-text)]">
-                01 · FIRST-USE ENGINEERING STATE · NO STORED REVIEWS YET
+                01 · Local Review Ledger Empty · Ready for First Submission
               </div>
               <h2 className="text-lg font-semibold text-[var(--pg-text-primary)]">
-                Your local review ledger is currently empty
+                No user code reviews stored in this browser yet
               </h2>
               <p className="text-sm text-[var(--pg-text-secondary)] leading-relaxed">
                 PatchGuard AI does not populate your workspace with fabricated historical metrics or
                 synthetic repositories. Submit a code change or pull-request snippet to run live
-                analysis, or open the isolated demonstration record to explore how source-line
+                analysis, or open the isolated demonstration record above to inspect how source-line
                 evidence and invalid model citations are handled.
               </p>
             </div>
@@ -237,7 +296,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           {/* 3-Step Technical Workflow Guide */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
             <div className="space-y-1.5">
-              <div className="font-mono text-[var(--pg-text-muted)]">STEP 01 · INPUT & OBJECTIVE</div>
+              <div className="font-mono text-[var(--pg-text-muted)]">01. Input & Objective</div>
               <h3 className="font-semibold text-sm text-[var(--pg-text-primary)]">
                 Configure source files and investigation focus
               </h3>
@@ -250,7 +309,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
             <div className="space-y-1.5">
               <div className="font-mono text-[var(--pg-text-muted)]">
-                STEP 02 · DUAL-ENGINE VERIFICATION
+                02. Dual-Engine Verification
               </div>
               <h3 className="font-semibold text-sm text-[var(--pg-text-primary)]">
                 Corroborate static rules with Gemini semantic analysis
@@ -267,10 +326,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
             <div className="space-y-1.5">
               <div className="font-mono text-[var(--pg-text-muted)]">
-                STEP 03 · EVIDENCE & BENCHMARKING
+                03. Evidence & Benchmarking
               </div>
               <h3 className="font-semibold text-sm text-[var(--pg-text-primary)]">
-                Triaging findings and measuring precision/recall
+                Triage findings and measure precision/recall
               </h3>
               <p className="text-[var(--pg-text-secondary)] leading-relaxed">
                 Inspect verbatim code snippets in the three-panel workspace, record review decisions
@@ -284,11 +343,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           {/* 6.2 Derived Review Activity Strip */}
           <section
             aria-label="Stored review activity summary"
-            className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] divide-y lg:divide-y-0 lg:divide-x divide-[var(--pg-border-default)]"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--pg-border-default)]"
           >
             <div className="p-4 space-y-1">
               <div className="font-mono text-xs text-[var(--pg-text-muted)]">
-                STORED REVIEWS COMPLETED
+                Stored Reviews Completed
               </div>
               <div className="font-mono text-2xl font-semibold text-[var(--pg-text-primary)] tabular-nums">
                 {activityMetrics.completedCount}
@@ -300,7 +359,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
             <div className="p-4 space-y-1">
               <div className="font-mono text-xs text-[var(--pg-text-muted)]">
-                REVIEWS REQUIRING ATTENTION
+                Reviews Requiring Attention
               </div>
               <div className="font-mono text-2xl font-semibold text-[var(--pg-warning)] tabular-nums">
                 {activityMetrics.reviewsRequiringAttention}
@@ -312,25 +371,25 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
             <div className="p-4 space-y-1">
               <div className="font-mono text-xs text-[var(--pg-text-muted)]">
-                FINDINGS AWAITING INVESTIGATION
+                Unreviewed Findings
               </div>
               <div className="font-mono text-2xl font-semibold text-[var(--pg-accent-text)] tabular-nums">
                 {activityMetrics.unreviewedFindingsCount}
               </div>
               <div className="text-xs text-[var(--pg-text-secondary)]">
-                Status currently marked Unreviewed or Reopened
+                Findings currently marked Unreviewed or Reopened
               </div>
             </div>
 
             <div className="p-4 space-y-1">
               <div className="font-mono text-xs text-[var(--pg-text-muted)]">
-                STORAGE SCOPE
+                Persistence Scope
               </div>
               <div className="font-mono text-sm font-semibold text-[var(--pg-text-primary)] pt-1">
-                Browser Local Record
+                Browser Local Ledger
               </div>
               <div className="text-xs text-[var(--pg-text-secondary)]">
-                Persisted locally in this browser; exportable via Settings
+                Stored locally on this device; exportable as JSON in Settings
               </div>
             </div>
           </section>
@@ -342,17 +401,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               aria-label="Unresolved findings attention queue"
               className="lg:col-span-7 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]"
             >
-              <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
-                    Attention Queue · Unreviewed Findings
+                    Attention Queue · Unresolved Findings
                   </h2>
                   <p className="text-xs text-[var(--pg-text-secondary)]">
                     Prioritized by severity across your stored code reviews. Select an entry to jump
                     directly to its source evidence.
                   </p>
                 </div>
-                <span className="font-mono text-xs text-[var(--pg-text-muted)] tabular-nums">
+                <span className="font-mono text-xs text-[var(--pg-text-muted)] tabular-nums shrink-0">
                   {attentionQueue.length} item(s)
                 </span>
               </div>
@@ -360,7 +419,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               {attentionQueue.length === 0 ? (
                 <div className="p-6 text-xs space-y-1.5">
                   <div className="font-mono font-semibold text-[var(--pg-success)]">
-                    NO UNREVIEWED FINDINGS IN QUEUE
+                    ✓ No Unreviewed Findings in Queue
                   </div>
                   <p className="text-[var(--pg-text-secondary)] leading-relaxed">
                     All findings in your stored reviews have been marked as Reviewed or Dismissed.
@@ -384,9 +443,15 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             {finding.category}
                           </span>
                           <span className="text-[var(--pg-text-muted)]">·</span>
-                          <span className="text-[var(--pg-info)]">
-                            {finding.location.filename}:L{finding.location.startLine}
-                          </span>
+                          {finding.location.isValidLocation ? (
+                            <span className="text-[var(--pg-info)] tabular-nums">
+                              {finding.location.filename}:L{finding.location.startLine}
+                            </span>
+                          ) : (
+                            <span className="text-[var(--pg-warning)]">
+                              {finding.location.filename} · Quarantined Location
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs font-semibold text-[var(--pg-text-primary)] truncate">
                           {finding.title}
@@ -410,18 +475,29 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               aria-label="Recent review timeline"
               className="lg:col-span-5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)]"
             >
-              <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-semibold text-[var(--pg-text-primary)]">
-                    Review Activity Timeline
+                    Recent Review Activity
                   </h2>
                   <p className="text-xs text-[var(--pg-text-secondary)]">
-                    Chronological log of executed code reviews.
+                    Chronological log of stored code reviews.
                   </p>
                 </div>
-                <span className="font-mono text-xs text-[var(--pg-text-muted)] tabular-nums">
-                  {reviews.length} total
-                </span>
+                <div className="flex items-center gap-3 font-mono text-xs shrink-0">
+                  <span className="text-[var(--pg-text-muted)] tabular-nums">
+                    {reviews.length} total
+                  </span>
+                  {onOpenHistory && (
+                    <button
+                      type="button"
+                      onClick={onOpenHistory}
+                      className="text-[var(--pg-info)] hover:underline cursor-pointer"
+                    >
+                      History →
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="divide-y divide-[var(--pg-border-subtle)]">
@@ -434,14 +510,20 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                       <div className="flex items-center gap-2 font-mono text-[11px] text-[var(--pg-text-muted)] tabular-nums">
                         <span>{rev.id}</span>
                         <span>·</span>
-                        <span>{new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                        <span>
+                          {new Date(rev.createdAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })}
+                        </span>
                         <span>·</span>
                         <span>{rev.durationMs}ms</span>
                       </div>
                       <div className="text-xs font-semibold text-[var(--pg-text-primary)] truncate">
                         {rev.title}
                       </div>
-                      <div className="flex items-center gap-2 font-mono text-xs">
+                      <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
                         <ReviewStatusLabel status={rev.status} />
                         <span className="text-[var(--pg-text-muted)]">·</span>
                         <span className="text-[var(--pg-text-secondary)] tabular-nums">
@@ -467,3 +549,4 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     </div>
   );
 };
+

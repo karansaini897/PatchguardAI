@@ -350,7 +350,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   {/* Inline Finding Callout Banner directly below the start line of the selected finding */}
                   {isSelectedStartLine && selectedFinding && verifiedSelectedLocation && (
                     <tr className="bg-[var(--pg-bg-elevated)] border-y border-[var(--pg-border-strong)]">
-                      <td className="px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-strong)] align-top uppercase">
+                      <td className="px-2 py-1.5 text-right font-mono text-[10px] text-[var(--pg-accent-text)] bg-[var(--pg-bg-code-gutter)] border-r border-[var(--pg-border-strong)] align-top uppercase font-semibold">
                         ACTIVE
                       </td>
                       <td className="px-4 py-2 font-sans text-xs">
@@ -366,12 +366,14 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                               </span>
                             )}
                           </div>
-                          <span className="font-mono text-[11px] text-[var(--pg-text-secondary)] tabular-nums">
-                            Verified L{verifiedSelectedLocation.startLine}
+                          <span className="font-mono text-[11px] text-[var(--pg-success)] tabular-nums">
+                            ✓ Verified L{verifiedSelectedLocation.startLine}
                             {verifiedSelectedLocation.endLine !== verifiedSelectedLocation.startLine
                               ? `–L${verifiedSelectedLocation.endLine}`
                               : ''}{' '}
-                            · {selectedFinding.confidence.toUpperCase()} CONFIDENCE
+                            <span className="text-[var(--pg-text-secondary)]">
+                              · {selectedFinding.confidence.toUpperCase()} CONFIDENCE
+                            </span>
                           </span>
                         </div>
                       </td>
