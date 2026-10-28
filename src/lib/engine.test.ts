@@ -24,6 +24,7 @@ import {
   isConfiguredGeminiApiKey,
   parseAndValidateAiFindings,
   parseRetryAfterMs,
+  resolveServerPort,
   sanitizeErrorMessage,
 } from './reviewOrchestrator.ts';
 import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData.ts';
@@ -1019,13 +1020,13 @@ test('13. Defensive workspace location validation (verifyReviewFindingsIntegrity
 });
 
 test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe parameterized SQL, OOB loop, weak error handling, and harmless file', async () => {
-  // File 1: Contains cases 1..4 at deterministic line numbers
+  // File 1: Contains cases 1..4 at deterministic line numbers (23 lines total)
   const controlledAuditFile: SourceFileRecord = {
     id: 'ctrl-file-1',
     filename: 'src/services/accountReconciliation.ts',
     language: 'typescript',
     changeStatus: 'modified',
-    lineCount: 22,
+    lineCount: 23,
     content: [
       'export async function reconcileAccounts(db: any, tenantId: string, batchIds: string[]) {', // L1
       '  // Case 1: Deliberately vulnerable SQL query (interpolation)',                         // L2
@@ -1053,13 +1054,13 @@ test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe param
     ].join('\n'),
   };
 
-  // File 2: Case 5 — Harmless utility file that must generate 0 findings
+  // File 2: Case 5 — Harmless utility file (11 lines total) that must generate 0 findings
   const harmlessUtilityFile: SourceFileRecord = {
     id: 'ctrl-file-2',
     filename: 'src/utils/currencyFormatter.ts',
     language: 'typescript',
     changeStatus: 'added',
-    lineCount: 10,
+    lineCount: 11,
     content: [
       'export function formatCentsToUsd(cents: number): string {',
       '  if (!Number.isFinite(cents)) {',
@@ -1079,7 +1080,7 @@ test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe param
     {
       title: 'Controlled 5-Case Verification Sample',
       objective: 'Verify vulnerable SQL, safe parameterized SQL, OOB loop, weak catch, and harmless file',
-      focusAreas: ['security', 'correctness', 'error-handling'],
+      focusAreas: ['security', 'correctness', 'error-handling', 'boundary'],
       files: [controlledAuditFile, harmlessUtilityFile],
       analysisMode: 'static-only',
     },
@@ -1095,38 +1096,44 @@ test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe param
   assert.equal(
     findings.length,
     3,
-    `Expected exactly 3 findings (vulnerable SQL on L3, OOB loop on L12, silent catch on L19-21), got ${findings.length}`
+    `Expected exactly 3 findings (vulnerable SQL on L3-4, OOB loop on L12-14, silent catch on L19-21), got ${findings.length}`
   );
 
-  // Case 1: Vulnerable SQL query on Line 3
+  // Case 1: Vulnerable SQL query on Lines 3-4
   const sqlFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-SEC-001');
   assert.ok(sqlFinding, 'Must detect vulnerable SQL interpolation (PG-SEC-001)');
   assert.equal(sqlFinding.location.filename, 'src/services/accountReconciliation.ts');
   assert.equal(sqlFinding.location.startLine, 3);
+  assert.equal(sqlFinding.location.endLine, 4);
   assert.equal(sqlFinding.location.isValidLocation, true);
+  assert.equal(sqlFinding.location.locationReason, 'verified');
 
   // Case 2: Safe parameterized query on Lines 7-8 must NOT generate any finding
   const safeSqlFalsePositive = findings.find(
     (f) =>
       f.location.filename === 'src/services/accountReconciliation.ts' &&
-      (f.location.startLine === 7 || f.location.startLine === 8)
+      f.location.startLine <= 8 &&
+      f.location.endLine >= 7
   );
   assert.equal(safeSqlFalsePositive, undefined, 'Safe parameterized SQL on L7-L8 must not generate a false positive');
 
-  // Case 3: Out-of-bounds loop on Line 12
+  // Case 3: Out-of-bounds loop on Lines 12-14
   const oobFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-BND-003');
   assert.ok(oobFinding, 'Must detect off-by-one loop condition (PG-BND-003)');
   assert.equal(oobFinding.location.filename, 'src/services/accountReconciliation.ts');
   assert.equal(oobFinding.location.startLine, 12);
+  assert.equal(oobFinding.location.endLine, 14);
   assert.equal(oobFinding.location.isValidLocation, true);
+  assert.equal(oobFinding.location.locationReason, 'verified');
 
-  // Case 4: Weak/silent error handling on Line 19-21
+  // Case 4: Weak/silent error handling on Lines 19-21
   const catchFinding = findings.find((f) => f.staticCorroboration?.ruleId === 'PG-ERR-004');
   assert.ok(catchFinding, 'Must detect silent catch block (PG-ERR-004)');
   assert.equal(catchFinding.location.filename, 'src/services/accountReconciliation.ts');
   assert.equal(catchFinding.location.startLine, 19);
   assert.equal(catchFinding.location.endLine, 21);
   assert.equal(catchFinding.location.isValidLocation, true);
+  assert.equal(catchFinding.location.locationReason, 'verified');
 
   // Case 5: Harmless utility file must have 0 findings
   const harmlessFindings = findings.filter(
@@ -1134,4 +1141,116 @@ test('14. Controlled 5-case release-readiness sample: vulnerable SQL, safe param
   );
   assert.equal(harmlessFindings.length, 0, 'Harmless utility file must generate 0 findings');
 });
+
+test('15. PG-ERR-004 error-handling rule accuracy (multiline JS/TS/Python, comments vs genuine logging/propagation) and resolveServerPort validation', () => {
+  // 15a. TypeScript file with both silent catch blocks (must flag) and genuine logging/rethrowing catch blocks with comments (must NOT flag)
+  const tsCatchFileContent = [
+    'export async function processJobs(jobs: Array<() => Promise<void>>, logger: any) {', // L1
+    '  // 1. Single-line empty catch (MUST FLAG L3-L3)',                                   // L2
+    '  try { await jobs[0](); } catch (e) {}',                                             // L3
+    '',                                                                                    // L4
+    '  // 2. Multiline catch with multiple comments & block comment (MUST FLAG L6-L10)',   // L5
+    '  try {',                                                                             // L6
+    '    await jobs[1]();',                                                                // L7
+    '  } catch {',                                                                         // L8
+    '    // first comment line',                                                           // L9
+    '    /* block comment line */',                                                        // L10
+    '  }',                                                                                 // L11
+    '',                                                                                    // L12
+    '  // 3. Catch with comment AND genuine logger.error (MUST NOT FLAG)',                 // L13
+    '  try {',                                                                             // L14
+    '    await jobs[2]();',                                                                // L15
+    '  } catch (err) {',                                                                   // L16
+    '    // Record operational failure before continuing',                                 // L17
+    '    logger.error("Job 2 failed", { err });',                                          // L18
+    '  }',                                                                                 // L19
+    '',                                                                                    // L20
+    '  // 4. Catch with comment AND rethrow (MUST NOT FLAG)',                              // L21
+    '  try {',                                                                             // L22
+    '    await jobs[3]();',                                                                // L23
+    '  } catch (err) {',                                                                   // L24
+    '    // Propagate domain exception',                                                   // L25
+    '    throw err;',                                                                      // L26
+    '  }',                                                                                 // L27
+    '}',                                                                                   // L28
+  ].join('\n');
+
+  const tsCatchFile: SourceFileRecord = {
+    id: 'err-ts-1',
+    filename: 'src/workers/jobRunner.ts',
+    language: 'typescript',
+    changeStatus: 'modified',
+    lineCount: 28,
+    content: tsCatchFileContent,
+  };
+
+  const tsFindings = runStaticAnalysisOnFiles([tsCatchFile]).filter(
+    (f) => f.staticCorroboration?.ruleId === 'PG-ERR-004'
+  );
+  assert.equal(
+    tsFindings.length,
+    2,
+    `Expected exactly 2 PG-ERR-004 findings in jobRunner.ts (L3 and L8-11), got ${tsFindings.length}`
+  );
+  assert.equal(tsFindings[0].location.startLine, 3);
+  assert.equal(tsFindings[0].location.endLine, 3);
+  assert.equal(tsFindings[1].location.startLine, 8);
+  assert.equal(tsFindings[1].location.endLine, 11);
+
+  // 15b. Python file with single-line pass, multiline commented pass (must flag), and genuine logging/raising handlers (must NOT flag)
+  const pyExceptContent = [
+    'def sync_records(cursor, logger):',                               // L1
+    '    try:',                                                        // L2
+    '        cursor.Ping()',                                           // L3
+    '    except Exception: pass',                                      // L4 (MUST FLAG L4-L4)
+    '',                                                                // L5
+    '    try:',                                                        // L6
+    '        cursor.Sync()',                                           // L7
+    '    except (ValueError, RuntimeError) as err:',                   // L8 (MUST FLAG L8-L10)
+    '        # intentionally ignored during warmup',                   // L9
+    '        pass',                                                    // L10
+    '',                                                                // L11
+    '    try:',                                                        // L12
+    '        cursor.Commit()',                                         // L13
+    '    except Exception as err:',                                    // L14 (MUST NOT FLAG)
+    '        # log and re-raise',                                      // L15
+    '        logger.exception("Commit failed: %s", err)',              // L16
+    '        raise',                                                   // L17
+  ].join('\n');
+
+  const pyExceptFile: SourceFileRecord = {
+    id: 'err-py-1',
+    filename: 'workers/sync_worker.py',
+    language: 'python',
+    changeStatus: 'modified',
+    lineCount: 17,
+    content: pyExceptContent,
+  };
+
+  const pyFindings = runStaticAnalysisOnFiles([pyExceptFile]).filter(
+    (f) => f.staticCorroboration?.ruleId === 'PG-ERR-004'
+  );
+  assert.equal(
+    pyFindings.length,
+    2,
+    `Expected exactly 2 PG-ERR-004 findings in sync_worker.py (L4 and L8-10), got ${pyFindings.length}`
+  );
+  assert.equal(pyFindings[0].location.startLine, 4);
+  assert.equal(pyFindings[0].location.endLine, 4);
+  assert.equal(pyFindings[1].location.startLine, 8);
+  assert.equal(pyFindings[1].location.endLine, 10);
+
+  // 15c. Verify resolveServerPort respects valid PORT and falls back to 3000 when absent or invalid
+  assert.equal(resolveServerPort(undefined), 3000);
+  assert.equal(resolveServerPort(''), 3000);
+  assert.equal(resolveServerPort('   '), 3000);
+  assert.equal(resolveServerPort('invalid'), 3000);
+  assert.equal(resolveServerPort('0'), 3000);
+  assert.equal(resolveServerPort('-3000'), 3000);
+  assert.equal(resolveServerPort('65536'), 3000);
+  assert.equal(resolveServerPort('3000.5'), 3000);
+  assert.equal(resolveServerPort('3099'), 3099);
+  assert.equal(resolveServerPort(' 8080 '), 8080);
+});
+
 

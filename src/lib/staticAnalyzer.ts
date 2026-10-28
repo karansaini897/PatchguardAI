@@ -310,7 +310,7 @@ const STATIC_RULES: StaticRuleDefinition[] = [
   },
   {
     ruleId: 'PG-ERR-004',
-    title: 'Swallowed exception or unawaited promise inside catch/error handler',
+    title: 'Silent exception handler swallows errors without logging or propagation',
     severity: 'medium',
     category: 'error-handling',
     languages: ['typescript', 'javascript', 'python', 'java'],
@@ -318,34 +318,178 @@ const STATIC_RULES: StaticRuleDefinition[] = [
       const hits: ReturnType<StaticRuleDefinition['matcher']> = [];
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (!/\b(catch|except)\b/.test(line)) continue;
-        const maxEnd = Math.min(lines.length, i + 4);
-        const windowSlice = lines.slice(i, maxEnd);
-        const joinedWindow = windowSlice.join(' ');
-        const isSilentCatch =
-          /catch\s*\([^)]*\)\s*\{\s*(\/\/.*)?\s*\}/.test(joinedWindow) ||
-          /except(\s+[A-Za-z0-9_]+)?\s*:\s*pass\b/.test(joinedWindow);
+        if (/^\s*(\/\/|#|--|\/\*|\*)/.test(line)) continue;
 
-        if (isSilentCatch) {
-          let blockLen = 1;
-          if (!/catch\s*\([^)]*\)\s*\{\s*(\/\/.*)?\s*\}/.test(line)) {
-            for (let k = 1; k < windowSlice.length; k++) {
-              blockLen = k + 1;
-              if (/^\s*(\}\s*$|pass\b)/.test(windowSlice[k])) break;
+        // 1. JS / TS / Java catch block: catch (err) { ... } or catch { ... }
+        const catchMatch = line.match(/\bcatch\s*(?:\([^)]*\))?\s*\{(.*)$/);
+        if (catchMatch) {
+          let braceDepth = 1;
+          let inBlockComment = false;
+          let inSingleQuote = false;
+          let inDoubleQuote = false;
+          let inTemplate = false;
+          let executableChars = '';
+          let endLineIdx = -1;
+
+          const maxScanEnd = Math.min(lines.length - 1, i + 15);
+          for (let k = i; k <= maxScanEnd; k++) {
+            const segment = k === i ? catchMatch[1] : lines[k];
+            for (let c = 0; c < segment.length; c++) {
+              const ch = segment[c];
+              const next = segment[c + 1] || '';
+
+              if (inBlockComment) {
+                if (ch === '*' && next === '/') {
+                  inBlockComment = false;
+                  c++;
+                }
+                continue;
+              }
+              if (inSingleQuote) {
+                if (ch === '\\') {
+                  executableChars += ch + next;
+                  c++;
+                  continue;
+                }
+                if (ch === "'") inSingleQuote = false;
+                executableChars += ch;
+                continue;
+              }
+              if (inDoubleQuote) {
+                if (ch === '\\') {
+                  executableChars += ch + next;
+                  c++;
+                  continue;
+                }
+                if (ch === '"') inDoubleQuote = false;
+                executableChars += ch;
+                continue;
+              }
+              if (inTemplate) {
+                if (ch === '\\') {
+                  executableChars += ch + next;
+                  c++;
+                  continue;
+                }
+                if (ch === '`') inTemplate = false;
+                executableChars += ch;
+                continue;
+              }
+
+              if (ch === '/' && next === '*') {
+                inBlockComment = true;
+                c++;
+                continue;
+              }
+              if (ch === '/' && next === '/') {
+                break; // Remainder of line k is a single-line comment
+              }
+              if (ch === "'") {
+                inSingleQuote = true;
+                executableChars += ch;
+                continue;
+              }
+              if (ch === '"') {
+                inDoubleQuote = true;
+                executableChars += ch;
+                continue;
+              }
+              if (ch === '`') {
+                inTemplate = true;
+                executableChars += ch;
+                continue;
+              }
+              if (ch === '{') {
+                braceDepth++;
+                executableChars += ch;
+                continue;
+              }
+              if (ch === '}') {
+                braceDepth--;
+                if (braceDepth === 0) {
+                  endLineIdx = k;
+                  break;
+                }
+                executableChars += ch;
+                continue;
+              }
+              executableChars += ch;
             }
+            if (endLineIdx !== -1) break;
           }
+
+          if (
+            endLineIdx !== -1 &&
+            !inBlockComment &&
+            executableChars.replace(/[\s;]/g, '') === ''
+          ) {
+            hits.push({
+              startLine: i + 1,
+              endLine: endLineIdx + 1,
+              matchedPattern: line.trim(),
+              explanation:
+                'Exception handler catches runtime errors and discards them with an empty or comment-only body without logging, rethrowing, or returning an error state.',
+              potentialImpact:
+                'Errors inside the try block are silently ignored, allowing execution to continue with potentially incomplete state and making operational failures harder to diagnose.',
+              suggestedRemediation:
+                'Log the caught exception with contextual identifiers and either rethrow a domain error or return an explicit fallback/failure result.',
+            });
+            i = endLineIdx;
+          }
+          continue;
+        }
+
+        // 2. Python single-line except ...: pass
+        if (/^\s*except(?:\s+[^:]+)?\s*:\s*(?:pass|\.\.\.)\b\s*(?:#.*)?$/.test(line)) {
           hits.push({
             startLine: i + 1,
-            endLine: i + blockLen,
+            endLine: i + 1,
             matchedPattern: line.trim(),
             explanation:
-              'Exception block catches runtime failures and discards them without structured logging, metric emission, or error propagation.',
+              'Exception handler catches runtime errors and discards them with a bare pass statement without logging or error propagation.',
             potentialImpact:
-              'Partial failures leave downstream callers assuming the operation succeeded, masking production incidents and corrupting caller control flow.',
+              'Errors inside the try block are silently ignored, allowing execution to continue with potentially incomplete state and making operational failures harder to diagnose.',
             suggestedRemediation:
-              'Log the error with contextual identifiers and either rethrow a typed domain error or return an explicit failure result.',
+              'Log the caught exception with contextual identifiers and either re-raise or return an explicit failure result.',
           });
-          i += blockLen - 1;
+          continue;
+        }
+
+        // 3. Python multiline except ...: block containing only comments and pass/...
+        const pyExceptMatch = line.match(/^(\s*)except(?:\s+[^:]+)?\s*:\s*(?:#.*)?$/);
+        if (pyExceptMatch) {
+          const exceptIndent = pyExceptMatch[1].length;
+          const bodyStatements: string[] = [];
+          let lastBodyLineIdx = i;
+          const maxPyEnd = Math.min(lines.length - 1, i + 15);
+
+          for (let k = i + 1; k <= maxPyEnd; k++) {
+            const rawLine = lines[k];
+            if (/^\s*(?:#.*)?$/.test(rawLine)) continue;
+            const indent = (rawLine.match(/^(\s*)/)?.[1] ?? '').length;
+            if (indent <= exceptIndent) break;
+            const stmt = rawLine.replace(/#.*$/, '').trim();
+            bodyStatements.push(stmt);
+            lastBodyLineIdx = k;
+          }
+
+          if (
+            bodyStatements.length > 0 &&
+            bodyStatements.every((stmt) => stmt === 'pass' || stmt === '...')
+          ) {
+            hits.push({
+              startLine: i + 1,
+              endLine: lastBodyLineIdx + 1,
+              matchedPattern: line.trim(),
+              explanation:
+                'Exception handler catches runtime errors and discards them with a bare pass statement without logging or error propagation.',
+              potentialImpact:
+                'Errors inside the try block are silently ignored, allowing execution to continue with potentially incomplete state and making operational failures harder to diagnose.',
+              suggestedRemediation:
+                'Log the caught exception with contextual identifiers and either re-raise or return an explicit failure result.',
+            });
+            i = lastBodyLineIdx;
+          }
         }
       }
       return hits;

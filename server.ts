@@ -10,11 +10,12 @@ import {
   callAiWithRetry,
   executeReviewPipeline,
   isConfiguredGeminiApiKey,
+  resolveServerPort,
 } from './src/lib/reviewOrchestrator.ts';
 
 dotenv.config({ quiet: true });
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = resolveServerPort(process.env.PORT, 3000);
 
 let lastAiConnectivityState: 'unverified' | 'verified' | 'failed' = 'unverified';
 let lastAiConnectivityMessage = '';
@@ -235,8 +236,9 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    process.env.DISABLE_HMR = 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, watch: null },
       appType: 'spa',
     });
     app.use(vite.middlewares);

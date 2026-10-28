@@ -33,6 +33,24 @@ export const DEFAULT_RETRY_CONFIG = {
 };
 
 /**
+ * Resolves a valid TCP server port from an environment variable string,
+ * falling back to defaultPort (3000) when absent, non-numeric, or outside 1..65535.
+ */
+export function resolveServerPort(
+  rawPort: string | undefined | null,
+  defaultPort = 3000
+): number {
+  if (!rawPort || typeof rawPort !== 'string') return defaultPort;
+  const trimmed = rawPort.trim();
+  if (!/^\d+$/.test(trimmed)) return defaultPort;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    return defaultPort;
+  }
+  return parsed;
+}
+
+/**
  * Verifies whether a candidate server API key is genuinely configured and not an example placeholder.
  */
 export function isConfiguredGeminiApiKey(rawKey: string | undefined | null): boolean {
