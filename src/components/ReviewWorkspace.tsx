@@ -521,8 +521,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       {/* Isolated Demo Notice Banner (Only shown when viewing the explicit demo record) */}
       {review.isDemoRecord && (
         <div className="px-4 py-1.5 bg-[var(--pg-info-subtle)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-mono text-[var(--pg-text-primary)]">
-            <span className="font-semibold text-[var(--pg-info)]">[ISOLATED DEMO RECORD]</span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 font-mono text-[var(--pg-text-primary)] min-w-0">
+            <span className="font-semibold text-[var(--pg-info)] shrink-0">[ISOLATED DEMO RECORD]</span>
             <span>
               Pre-computed static demonstration of PR #418 ({verifiedFindings.length} verified
               findings). Stored separately from your local review history.
@@ -572,8 +572,8 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
       )}
 
       {/* Workspace Summary Strip */}
-      <div className="px-3 sm:px-4 py-2 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
+      <div className="px-3 sm:px-4 py-2 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-col xl:flex-row xl:items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 w-full">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1
               className="text-sm font-semibold text-[var(--pg-text-primary)] truncate max-w-full"
@@ -726,7 +726,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             role="tab"
             aria-selected={mobilePane === 'source'}
             onClick={() => setMobilePane('source')}
-            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'source'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
@@ -739,7 +739,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             role="tab"
             aria-selected={mobilePane === 'findings'}
             onClick={() => setMobilePane('findings')}
-            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'findings'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
@@ -750,15 +750,17 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           <button
             type="button"
             role="tab"
+            aria-label="Evidence Details"
             aria-selected={mobilePane === 'evidence'}
             onClick={() => setMobilePane('evidence')}
-            className={`py-2.5 px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'evidence'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
             }`}
           >
-            Evidence Details
+            <span className="sm:hidden">Evidence</span>
+            <span className="hidden sm:inline">Evidence Details</span>
           </button>
         </div>
 

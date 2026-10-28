@@ -174,8 +174,8 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   return (
     <div className="flex flex-col h-full bg-[var(--pg-bg-code)] text-[var(--pg-text-primary)] select-text">
       {/* File Metadata & Source Toolbar */}
-      <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono shrink-0">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-xs font-mono shrink-0">
+        <div className="flex items-center gap-2 min-w-[180px] flex-1 overflow-hidden">
           <span
             className="text-[var(--pg-text-primary)] font-semibold truncate"
             title={file.filename}
