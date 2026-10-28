@@ -279,10 +279,11 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     return review.files.find((f) => f.id === selectedFileId) || review.files[0];
   }, [review, selectedFileId]);
 
-  // Only pass findings that resolve unambiguously to activeFile
+  // Only pass verified findings that resolve unambiguously to activeFile
   const findingsForActiveFile = useMemo(() => {
     if (!review || !activeFile) return [];
     return verifiedFindings.filter((f) => {
+      if (!f.location.isValidLocation) return false;
       const resolved = resolveTargetSourceFile(
         review.files,
         f.location.fileId,
@@ -322,7 +323,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     setLiveStatusAnnouncement('Reset all finding filters.');
   };
 
-  // Navigate to a finding only after verifying its target file association
+  // Navigate to a finding only after verifying both its location integrity and target file association
   const handleSelectFinding = (finding: ReviewFinding, allowToggleDeselect = false) => {
     if (allowToggleDeselect && selectedFindingId === finding.id) {
       setSelectedFindingId(null);
@@ -331,13 +332,13 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
     }
     setSelectedFindingId(finding.id);
 
-    if (review) {
+    if (review && finding.location.isValidLocation) {
       const targetFile = resolveTargetSourceFile(
         review.files,
         finding.location.fileId,
         finding.location.filename
       );
-      // Only switch active file when the finding resolves unambiguously to a file in this review
+      // Only switch active file when the finding has a verified location and resolves unambiguously to a file in this review
       if (targetFile && targetFile.id !== selectedFileId) {
         setSelectedFileId(targetFile.id);
       }
