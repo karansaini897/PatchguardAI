@@ -1,0 +1,611 @@
+openapi: 3.1.0
+info:
+  title: PatchGuard AI — Backend REST & Supabase Edge Function API
+  version: 6.1.0
+  description: |
+    Production REST API and Supabase Edge Function specification for PatchGuard AI.
+
+    ### Endpoint Implementation Status
+    - **Implemented & Verified Locally (Express + Local RLS Postgres Mirror)**:
+      - `GET /api/health` and `GET /functions/v1/health`
+      - `POST /api/health/probe-ai`
+      - `POST /api/review`, `POST /functions/v1/analyze-review`, `POST /functions/v1/review-code`
+      - `GET /api/projects`, `POST /api/projects`, `GET /api/projects/{projectId}`, `PATCH /api/projects/{projectId}`, `DELETE /api/projects/{projectId}`
+      - `GET /api/reviews`, `GET /api/reviews/{reviewId}`, `GET /api/reviews/{reviewId}/status`, `GET /api/reviews/{reviewId}/findings`, `POST /api/reviews/{reviewId}/retry`, `PATCH /api/reviews/{reviewId}/findings/{findingId}`, `DELETE /api/reviews/{reviewId}`
+      - `POST /api/auth/signup`, `POST /api/auth/signin`, `POST /api/auth/signout`, `POST /api/auth/reset-password`, `GET /api/auth/session`
+    - **Implemented & Awaiting External Supabase Project Provisioning**:
+      - Direct Supabase PostgREST CRUD (`/rest/v1/projects`, `/rest/v1/reviews`, `/rest/v1/findings`) with PostgreSQL Row Level Security (`20261028000001_patchguard_phase1.sql`).
+      - Deployed Deno Edge Functions (`supabase functions deploy analyze-review`, `review-code`, `health`).
+
+servers:
+  - url: http://localhost:3000
+    description: Local Express + Vite Full-Stack Development Server
+  - url: https://{projectRef}.supabase.co
+    description: Live Supabase Project (PostgREST & Edge Functions)
+    variables:
+      projectRef:
+        default: your-project-ref
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase Auth JWT (`access_token`) or local development session JWT (`pg_jwt_*`).
+
+  parameters:
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Optional client-supplied correlation ID echoed in responses and diagnostic logs.
+      schema:
+        type: string
+        example: req-m2k9x8-4a1f
+
+  schemas:
+    StructuredApiError:
+      type: object
+      required:
+        - category
+        - message
+        - technicalDetail
+        - remediationStep
+        - requestId
+        - timestamp
+        - retryable
+      properties:
+        category:
+          type: string
+          enum:
+            - BACKEND_UNAVAILABLE
+            - AUTH_REQUIRED
+            - FORBIDDEN_PROJECT
+            - NOT_FOUND
+            - RATE_LIMIT_EXCEEDED
+            - DUPLICATE_IN_FLIGHT
+            - PAYLOAD_TOO_LARGE
+            - INVALID_REQUEST
+            - MISSING_SERVER_CONFIG
+            - AI_SERVICE_UNAVAILABLE
+            - AI_AUTH_ERROR
+            - AI_RATE_LIMIT
+            - AI_TIMEOUT
+            - INVALID_MODEL_RESPONSE
+            - PERSISTENCE_FAILURE
+            - INCOMPLETE_ANALYSIS
+        message:
+          type: string
+          example: "Authentication required: missing Bearer access token."
+        technicalDetail:
+          type: string
+          example: "Endpoint requires a valid Authorization: Bearer <access_token> header."
+        remediationStep:
+          type: string
+          example: "Sign in to your PatchGuard AI account and retry the review."
+        requestId:
+          type: string
+          example: "req-m2k9x8-4a1f"
+        timestamp:
+          type: string
+          format: date-time
+        retryable:
+          type: boolean
+        attemptsMade:
+          type: integer
+        httpStatus:
+          type: integer
+
+    ErrorEnvelope:
+      type: object
+      required:
+        - requestId
+        - error
+      properties:
+        requestId:
+          type: string
+        error:
+          $ref: '#/components/schemas/StructuredApiError'
+
+    ProjectRecord:
+      type: object
+      required:
+        - id
+        - ownerId
+        - name
+        - slug
+        - repository
+        - defaultBranch
+        - retentionMode
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          example: "Core Engineering Repository"
+        slug:
+          type: string
+          example: "core-engineering-repository"
+        repository:
+          type: string
+          example: "github.com/org/core-services"
+        defaultBranch:
+          type: string
+          example: "main"
+        retentionMode:
+          type: string
+          enum: [redacted_snippets_only, redacted_full_source]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ReviewRequestPayload:
+      type: object
+      required:
+        - title
+        - objective
+        - focusAreas
+        - files
+      properties:
+        projectId:
+          type: string
+          format: uuid
+          description: Authorized project UUID owned by the caller.
+        retentionMode:
+          type: string
+          enum: [redacted_snippets_only, redacted_full_source]
+        title:
+          type: string
+          maxLength: 240
+          example: "PR #418 — Ledger Payout Reconciliation Audit"
+        objective:
+          type: string
+          maxLength: 2000
+          example: "Audit SQL parameterization, loop bounds, and exception handling."
+        focusAreas:
+          type: array
+          items:
+            type: string
+            enum:
+              - security
+              - concurrency
+              - boundary
+              - error-handling
+              - performance
+              - correctness
+              - data-integrity
+              - maintainability
+        analysisMode:
+          type: string
+          enum: [hybrid, static-only, ai-only]
+          default: hybrid
+        files:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required:
+              - filename
+              - language
+              - content
+            properties:
+              id:
+                type: string
+              filename:
+                type: string
+                example: "src/services/accountReconciliation.ts"
+              language:
+                type: string
+                enum: [typescript, javascript, python, java, sql]
+              content:
+                type: string
+                description: Non-empty UTF-8 source file (max 120 KB per file; max 256 KB total request body).
+              changeStatus:
+                type: string
+                enum: [modified, added, snippet]
+
+paths:
+  /api/health:
+    get:
+      summary: Service & Engine Health Check (Implemented & Verified)
+      operationId: getHealth
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      responses:
+        '200':
+          description: Service availability and configuration status.
+
+  /functions/v1/health:
+    get:
+      summary: Supabase Edge Function Health Check (Implemented & Verified Locally)
+      operationId: getEdgeHealth
+      responses:
+        '200':
+          description: Edge Function availability and configuration status.
+
+  /api/health/probe-ai:
+    post:
+      summary: Live Gemini AI Provider Readiness Probe (Implemented & Verified)
+      operationId: probeAiConnectivity
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      responses:
+        '200':
+          description: Safe probe result with latency and sanitized status message.
+
+  /api/projects:
+    get:
+      summary: List Authorized Projects for Authenticated User (Implemented & Verified)
+      operationId: listProjects
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of projects owned by `auth.uid()`.
+        '401':
+          description: Missing or invalid Bearer token (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      summary: Create a New Project (Implemented & Verified)
+      operationId: createProject
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: "Payments Settlement Service"
+                repository:
+                  type: string
+                  example: "github.com/acme/payments"
+                defaultBranch:
+                  type: string
+                  example: "main"
+                retentionMode:
+                  type: string
+                  enum: [redacted_snippets_only, redacted_full_source]
+      responses:
+        '201':
+          description: Created project record.
+        '400':
+          description: Validation failure (`INVALID_REQUEST`).
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Attempted `ownerId` spoofing rejected by RLS (`FORBIDDEN_PROJECT`).
+
+  /api/projects/{projectId}:
+    get:
+      summary: Retrieve Authorized Project Details (Implemented & Verified)
+      operationId: getProjectById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Project details.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Project belongs to another tenant (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Project not found (`NOT_FOUND`).
+    patch:
+      summary: Update Project Metadata or Retention Policy (Implemented & Verified)
+      operationId: updateProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                repository:
+                  type: string
+                defaultBranch:
+                  type: string
+                retentionMode:
+                  type: string
+                  enum: [redacted_snippets_only, redacted_full_source]
+      responses:
+        '200':
+          description: Updated project record.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: RLS violation (`FORBIDDEN_PROJECT`).
+    delete:
+      summary: Delete Authorized Project and Cascade Reviews/Findings (Implemented & Verified)
+      operationId: deleteProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Project deleted and child reviews/findings cascaded.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: RLS violation (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Project not found (`NOT_FOUND`).
+
+  /api/review:
+    post:
+      summary: Execute Authenticated Code Review Pipeline (Implemented & Verified)
+      operationId: executeReview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequestPayload'
+      responses:
+        '200':
+          description: Review completed (`completed`, `completed_static_only`, or `completed_with_warnings`) and persisted.
+        '400':
+          description: Invalid payload, empty file, or path traversal (`INVALID_REQUEST`).
+        '401':
+          description: Missing or expired Bearer token (`AUTH_REQUIRED`).
+        '403':
+          description: Caller does not own `projectId` (`FORBIDDEN_PROJECT`).
+        '409':
+          description: Duplicate concurrent review request already in flight (`DUPLICATE_IN_FLIGHT`).
+        '413':
+          description: Payload exceeds 256 KB, >20 files, or >120 KB single file (`PAYLOAD_TOO_LARGE`).
+        '429':
+          description: User rate limit or upstream AI quota exceeded (`RATE_LIMIT_EXCEEDED` / `AI_RATE_LIMIT`).
+        '502':
+          description: Malformed AI output (`INVALID_MODEL_RESPONSE`); failed review persisted safely.
+        '503':
+          description: AI provider unavailable or unconfigured in AI-only mode (`AI_SERVICE_UNAVAILABLE` / `MISSING_SERVER_CONFIG`).
+        '504':
+          description: Upstream AI call timed out after bounded retries (`AI_TIMEOUT`).
+
+  /functions/v1/analyze-review:
+    post:
+      summary: Supabase Edge Function — Execute Code Review (Implemented & Ready for Deployment)
+      operationId: analyzeReviewEdge
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequestPayload'
+      responses:
+        '200':
+          description: Review analyzed and persisted to Supabase Postgres under caller RLS.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Unauthorized project (`FORBIDDEN_PROJECT`).
+        '413':
+          description: Payload too large (`PAYLOAD_TOO_LARGE`).
+
+  /functions/v1/review-code:
+    post:
+      summary: Supabase Edge Function Alias — Execute Code Review (Implemented & Ready for Deployment)
+      operationId: reviewCodeEdge
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequestPayload'
+      responses:
+        '200':
+          description: Review analyzed and persisted to Supabase Postgres under caller RLS.
+
+  /api/reviews:
+    get:
+      summary: List Authorized Review History (Implemented & Verified)
+      operationId: listReviews
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ordered list of persisted reviews and findings owned by caller.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+
+  /api/reviews/{reviewId}:
+    get:
+      summary: Retrieve Single Authorized Review by ID (Implemented & Verified)
+      operationId: getReviewById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Persisted review record with findings.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '404':
+          description: Review not found or owned by another user (`NOT_FOUND`).
+    delete:
+      summary: Delete Authorized Review and Cascade Findings (Implemented & Verified)
+      operationId: deleteReview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Review and child findings deleted.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: RLS violation (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Review not found (`NOT_FOUND`).
+
+  /api/reviews/{reviewId}/status:
+    get:
+      summary: Retrieve Review Lifecycle Status & Stage Progress (Implemented & Verified)
+      operationId: getReviewStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current review status (`in_progress`, `completed`, `completed_static_only`, `completed_with_warnings`, `failed`), timestamps, and stages.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '404':
+          description: Review not found (`NOT_FOUND`).
+
+  /api/reviews/{reviewId}/findings:
+    get:
+      summary: Retrieve Validated & Quarantined Findings for a Review (Implemented & Verified)
+      operationId: getReviewFindings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Findings array for the review.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '404':
+          description: Review not found (`NOT_FOUND`).
+
+  /api/reviews/{reviewId}/retry:
+    post:
+      summary: Safely Retry a Failed or Degraded Review (Implemented & Verified)
+      operationId: retryReview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retried review record.
+        '400':
+          description: Review is already `completed` and does not qualify for retry (`INVALID_REQUEST`).
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '404':
+          description: Review not found (`NOT_FOUND`).
+
+  /api/reviews/{reviewId}/findings/{findingId}:
+    patch:
+      summary: Update Finding Triage Workflow Status (Implemented & Verified)
+      operationId: updateFindingStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [unreviewed, reviewed, dismissed, reopened]
+      responses:
+        '200':
+          description: Updated review record with new finding status.
+        '400':
+          description: Invalid status value (`INVALID_REQUEST`).
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: RLS violation (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Review or finding not found (`NOT_FOUND`).

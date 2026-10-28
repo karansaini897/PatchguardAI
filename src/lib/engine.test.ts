@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   computeSourceContentHash,
   deduplicateFindings,
@@ -27,8 +29,28 @@ import {
   resolveServerPort,
   sanitizeErrorMessage,
 } from './reviewOrchestrator.ts';
+import {
+  applySourceRetentionPolicy,
+  assertNoClientSideSecretLeakage,
+  executeAuthenticatedReviewFlow,
+  extractBearerToken,
+  InFlightReviewDeduplicator,
+  isConfiguredSupabaseAnonKey,
+  isConfiguredSupabaseServiceRoleKey,
+  isConfiguredSupabaseUrl,
+  redactSecretsInSource,
+  REVIEW_PAYLOAD_LIMITS,
+  RlsEnforcedPostgresMirror,
+  RlsPolicyViolationError,
+  SlidingWindowRateLimiter,
+  validateReviewRequestWithLimits,
+} from './supabaseBackendCore.ts';
 import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData.ts';
-import type { ReviewFinding, SourceFileRecord } from '../types/patchguard.ts';
+import type {
+  AuthenticatedUser,
+  ReviewFinding,
+  SourceFileRecord,
+} from '../types/patchguard.ts';
 
 const sampleVulnFile: SourceFileRecord = {
   id: 'file-1',
@@ -1353,6 +1375,694 @@ test('15. PG-ERR-004 error-handling rule accuracy (single-line pass, single-line
   assert.equal(perfFindings[0].location.locationReason, 'verified');
 });
 
+test('16. Supabase credential validation and client-side secret leakage guard', () => {
+  // 16a. URL and key placeholder rejection
+  assert.equal(isConfiguredSupabaseUrl(''), false);
+  assert.equal(isConfiguredSupabaseUrl('https://your-project-ref.supabase.co'), false);
+  assert.equal(isConfiguredSupabaseUrl('https://example.supabase.co'), false);
+  assert.equal(isConfiguredSupabaseUrl('https://xyzcompanyproj.supabase.co'), true);
+  assert.equal(isConfiguredSupabaseUrl('http://127.0.0.1:54321'), true);
+
+  assert.equal(isConfiguredSupabaseAnonKey(''), false);
+  assert.equal(isConfiguredSupabaseAnonKey('your-supabase-anon-or-publishable-key'), false);
+  assert.equal(
+    isConfiguredSupabaseAnonKey('sb_publishable_realLookingAnonKey9876543210abcdef'),
+    true
+  );
+
+  assert.equal(isConfiguredSupabaseServiceRoleKey(''), false);
+  assert.equal(
+    isConfiguredSupabaseServiceRoleKey('your-supabase-service-role-key-server-only'),
+    false
+  );
+  assert.equal(
+    isConfiguredSupabaseServiceRoleKey('sb_secret_realServiceRoleKey9876543210abcdef'),
+    true
+  );
+
+  // 16b. Client secret leakage guard rejects VITE_ variables containing service_role or Gemini keys
+  const safeCheck = assertNoClientSideSecretLeakage({
+    VITE_SUPABASE_URL: 'https://xyzcompanyproj.supabase.co',
+    VITE_SUPABASE_ANON_KEY: 'sb_publishable_realLookingAnonKey9876543210abcdef',
+    SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_serverOnlyKey9876543210',
+    GEMINI_API_KEY: 'AIzaSyServerOnlyGeminiKey9876543210abcdef',
+  });
+  assert.equal(safeCheck.safe, true);
+  assert.equal(safeCheck.violations.length, 0);
+
+  const unsafeCheck = assertNoClientSideSecretLeakage({
+    VITE_SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_leaked',
+    VITE_GEMINI_API_KEY: 'AIzaSyLeakedGeminiKey9876543210abcdef',
+    VITE_SUPABASE_ANON_KEY: 'sb_secret_accidentallyPutSecretInAnonVar12345',
+  });
+  assert.equal(unsafeCheck.safe, false);
+  assert.equal(unsafeCheck.violations.length, 5);
+});
+
+test('17. Supabase SQL migration schema, constraints, indexes, and Row Level Security policies verification', () => {
+  const migrationPath = path.resolve(
+    process.cwd(),
+    'supabase/migrations/20261028000001_patchguard_phase1.sql'
+  );
+  assert.equal(fs.existsSync(migrationPath), true, 'Migration SQL file must exist');
+  const sql = fs.readFileSync(migrationPath, 'utf8');
+
+  // Verify core tables
+  assert.match(sql, /create table if not exists public\.projects/i);
+  assert.match(sql, /create table if not exists public\.reviews/i);
+  assert.match(sql, /create table if not exists public\.findings/i);
+
+  // Verify RLS is enabled and forced on all 3 tables
+  assert.match(sql, /alter table public\.projects enable row level security;/i);
+  assert.match(sql, /alter table public\.projects force row level security;/i);
+  assert.match(sql, /alter table public\.reviews enable row level security;/i);
+  assert.match(sql, /alter table public\.reviews force row level security;/i);
+  assert.match(sql, /alter table public\.findings enable row level security;/i);
+  assert.match(sql, /alter table public\.findings force row level security;/i);
+
+  // Verify granular CRUD policies for projects, reviews, and findings
+  for (const table of ['projects', 'reviews', 'findings']) {
+    for (const op of ['select', 'insert', 'update', 'delete']) {
+      assert.match(
+        sql,
+        new RegExp(`create policy "${table}_${op}_own"`, 'i'),
+        `Missing RLS policy ${table}_${op}_own`
+      );
+    }
+  }
+
+  // Verify relational parent ownership check (EXISTS) and line-bounds constraint
+  assert.match(sql, /from public\.projects p\s+where p\.id = reviews\.project_id\s+and p\.owner_id = auth\.uid\(\)/i);
+  assert.match(sql, /from public\.reviews r\s+join public\.projects p on p\.id = r\.project_id/i);
+  assert.match(sql, /constraint findings_line_bounds_chk/i);
+});
+
+test('18. Authentication, Bearer token verification, and multi-tenant RLS ownership enforcement', async () => {
+  const db = new RlsEnforcedPostgresMirror();
+
+  const userA: AuthenticatedUser = {
+    id: 'aaaa1111-1111-4111-8111-111111111111',
+    email: 'alice@patchguard.dev',
+    accessToken: 'jwt-valid-alice',
+    authProvider: 'supabase-jwt',
+  };
+  const userB: AuthenticatedUser = {
+    id: 'bbbb2222-2222-4222-8222-222222222222',
+    email: 'bob@patchguard.dev',
+    accessToken: 'jwt-valid-bob',
+    authProvider: 'supabase-jwt',
+  };
+
+  const verifyTokenFn = async (token: string): Promise<AuthenticatedUser | null> => {
+    if (token === userA.accessToken) return userA;
+    if (token === userB.accessToken) return userB;
+    return null;
+  };
+
+  // 18a. Create projects for User A and User B
+  const projectA = db.createProject(userA.id, {
+    name: 'Alice Payments Engine',
+    repository: 'github.com/alice/payments',
+    retentionMode: 'redacted_snippets_only',
+  });
+  const projectB = db.createProject(userB.id, {
+    name: 'Bob Analytics Service',
+    repository: 'github.com/bob/analytics',
+    retentionMode: 'redacted_full_source',
+  });
+
+  // Verify User A cannot spoof owner_id when inserting a project
+  assert.throws(
+    () =>
+      db.createProject(userA.id, {
+        ownerId: userB.id,
+        name: 'Spoofed Owner Project',
+      }),
+    (err: unknown) => err instanceof RlsPolicyViolationError
+  );
+
+  // Verify User B cannot read User A's project
+  assert.equal(db.getProjectById(userB.id, projectA.id), null);
+  assert.equal(db.listProjects(userA.id).length, 1);
+  assert.equal(db.listProjects(userA.id)[0].id, projectA.id);
+
+  // 18b. Missing Authorization header -> 401 AUTH_REQUIRED
+  assert.equal(extractBearerToken(undefined), null);
+  assert.equal(extractBearerToken('Basic abc123'), null);
+  assert.equal(extractBearerToken('Bearer jwt-valid-alice'), 'jwt-valid-alice');
+
+  const noTokenOutcome = await executeAuthenticatedReviewFlow(
+    {
+      projectId: projectA.id,
+      title: 'Unauthorized Review Attempt',
+      objective: 'Must fail with 401',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    {
+      requestId: 'req-no-token',
+      authorizationHeader: null,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(noTokenOutcome.ok, false);
+  if (!noTokenOutcome.ok) {
+    assert.equal(noTokenOutcome.httpStatus, 401);
+    assert.equal(noTokenOutcome.error.category, 'AUTH_REQUIRED');
+  }
+
+  // 18c. Expired/Invalid token -> 401 AUTH_REQUIRED
+  const badTokenOutcome = await executeAuthenticatedReviewFlow(
+    {
+      projectId: projectA.id,
+      title: 'Expired Token Review Attempt',
+      objective: 'Must fail with 401',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    {
+      requestId: 'req-bad-token',
+      authorizationHeader: 'Bearer expired-or-forged-token',
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(badTokenOutcome.ok, false);
+  if (!badTokenOutcome.ok) {
+    assert.equal(badTokenOutcome.httpStatus, 401);
+    assert.equal(badTokenOutcome.error.category, 'AUTH_REQUIRED');
+  }
+
+  // 18d. Cross-tenant attack: User B attempts to save a review to User A's project -> 403 FORBIDDEN_PROJECT
+  const crossTenantOutcome = await executeAuthenticatedReviewFlow(
+    {
+      projectId: projectA.id,
+      title: 'Cross-Tenant Injection Attempt',
+      objective: 'Bob trying to write into Alice project',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    {
+      requestId: 'req-cross-tenant',
+      authorizationHeader: `Bearer ${userB.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(crossTenantOutcome.ok, false);
+  if (!crossTenantOutcome.ok) {
+    assert.equal(crossTenantOutcome.httpStatus, 403);
+    assert.equal(crossTenantOutcome.error.category, 'FORBIDDEN_PROJECT');
+  }
+  assert.equal(db.listReviews(userA.id).length, 0, 'Alice project must remain untouched');
+
+  // 18e. Authorized User A executes and persists a review to projectA
+  const validOutcomeA = await executeAuthenticatedReviewFlow(
+    {
+      projectId: projectA.id,
+      title: 'Alice Authorized Ledger Audit',
+      objective: 'Verify authorized review persistence and finding workflow updates',
+      focusAreas: ['security', 'boundary', 'error-handling'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    {
+      requestId: 'req-alice-valid',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(validOutcomeA.ok, true);
+  if (!validOutcomeA.ok) return;
+
+  assert.equal(validOutcomeA.review.projectId, projectA.id);
+  assert.equal(validOutcomeA.review.ownerId, userA.id);
+  assert.ok(validOutcomeA.review.findings.length >= 4);
+
+  // User A sees her review; User B sees 0 reviews on projectB
+  const aliceReviews = db.listReviews(userA.id);
+  const bobReviews = db.listReviews(userB.id);
+  assert.equal(aliceReviews.length, 1);
+  assert.equal(bobReviews.length, 0);
+  assert.equal(db.listReviews(userB.id, projectA.id).length, 0);
+
+  // User B cannot update or delete User A's findings or review
+  const firstFindingId = validOutcomeA.review.findings[0].id;
+  assert.throws(
+    () =>
+      db.updateFindingStatus(
+        userB.id,
+        validOutcomeA.review.id,
+        firstFindingId,
+        'dismissed'
+      ),
+    (err: unknown) => err instanceof RlsPolicyViolationError
+  );
+  assert.throws(
+    () => db.deleteReview(userB.id, validOutcomeA.review.id),
+    (err: unknown) => err instanceof RlsPolicyViolationError
+  );
+
+  // User A can update finding status and reload persisted state
+  const updatedReview = db.updateFindingStatus(
+    userA.id,
+    validOutcomeA.review.id,
+    firstFindingId,
+    'reviewed'
+  );
+  assert.ok(updatedReview);
+  assert.equal(
+    updatedReview.findings.find((f) => f.id === firstFindingId)?.status,
+    'reviewed'
+  );
+});
+
+test('19. Request validation, body-size limits, malformed AI output, and failed-review persistence', async () => {
+  const db = new RlsEnforcedPostgresMirror();
+  const user: AuthenticatedUser = {
+    id: 'cccc3333-3333-4333-8333-333333333333',
+    email: 'secops@patchguard.dev',
+    accessToken: 'jwt-secops',
+    authProvider: 'supabase-jwt',
+  };
+  const proj = db.ensureDefaultProject(user.id);
+
+  // 19a. Oversized request body (> 256 KB) -> 413 PAYLOAD_TOO_LARGE
+  const oversizedValidation = validateReviewRequestWithLimits(
+    {
+      title: 'Oversized Request',
+      objective: 'Test limit',
+      focusAreas: ['security'],
+      files: [{ filename: 'src/large.ts', language: 'typescript', content: 'const x = 1;' }],
+    },
+    REVIEW_PAYLOAD_LIMITS.MAX_BODY_BYTES + 1024,
+    'req-oversize'
+  );
+  assert.equal(oversizedValidation.ok, false);
+  if (!oversizedValidation.ok) {
+    assert.equal(oversizedValidation.httpStatus, 413);
+    assert.equal(oversizedValidation.error.category, 'PAYLOAD_TOO_LARGE');
+  }
+
+  // 19b. Unsafe path traversal filename ("../../etc/passwd") -> 400 INVALID_REQUEST
+  const traversalValidation = validateReviewRequestWithLimits(
+    {
+      title: 'Traversal Attempt',
+      objective: 'Test filename check',
+      focusAreas: ['security'],
+      files: [{ filename: '../../etc/passwd', language: 'typescript', content: 'root:x:0:0' }],
+    },
+    undefined,
+    'req-traversal'
+  );
+  assert.equal(traversalValidation.ok, false);
+  if (!traversalValidation.ok) {
+    assert.equal(traversalValidation.httpStatus, 400);
+    assert.equal(traversalValidation.error.category, 'INVALID_REQUEST');
+  }
+
+  // 19c. When all analysis engines fail (e.g., AI-only mode with malformed model output),
+  // review is persisted with status='failed' and 0 fabricated findings.
+  const failedAiOnlyOutcome = await executeAuthenticatedReviewFlow(
+    {
+      projectId: proj.id,
+      title: 'AI-Only Malformed Output Test',
+      objective: 'Ensure failed reviews are saved safely without fabricating findings',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'ai-only',
+    },
+    {
+      requestId: 'req-failed-persist',
+      authorizationHeader: `Bearer ${user.accessToken}`,
+      verifyAccessTokenFn: async () => user,
+      database: db,
+      invokeAiModel: async () => 'NOT_VALID_JSON{{{',
+    }
+  );
+  assert.equal(failedAiOnlyOutcome.ok, false);
+  if (!failedAiOnlyOutcome.ok) {
+    assert.equal(failedAiOnlyOutcome.httpStatus, 502);
+    assert.equal(failedAiOnlyOutcome.error.category, 'INVALID_MODEL_RESPONSE');
+    assert.ok(failedAiOnlyOutcome.failedReview);
+    assert.equal(failedAiOnlyOutcome.failedReview.status, 'failed');
+    assert.equal(failedAiOnlyOutcome.failedReview.findings.length, 0);
+  }
+
+  // Verify the failed review record was persisted in the user's review history for auditing
+  const storedReviews = db.listReviews(user.id);
+  assert.equal(storedReviews.length, 1);
+  assert.equal(storedReviews[0].status, 'failed');
+  assert.equal(storedReviews[0].findings.length, 0);
+});
+
+test('20. Source-Code Retention Policy & Secret Redaction verification', async () => {
+  const rawSecretLine =
+    'const stripeKey = "sk_live_9876543210abcdef123456"; const gcpKey = "AIzaSySecretKeyMaterial1234567890";';
+  const redaction = redactSecretsInSource(rawSecretLine);
+  assert.equal(redaction.redactedCount, 2);
+  assert.ok(!redaction.redactedContent.includes('sk_live_9876543210abcdef123456'));
+  assert.ok(!redaction.redactedContent.includes('AIzaSySecretKeyMaterial1234567890'));
+  assert.ok(redaction.redactedContent.includes('[REDACTED_SECRET]'));
+
+  // Run pipeline on sampleVulnFile (15 lines, containing sk_live_... on L2)
+  const pipelineOutcome = await executeReviewPipeline(
+    {
+      title: 'Retention Policy Test',
+      objective: 'Test redacted_snippets_only vs redacted_full_source',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    { requestId: 'req-retention', invokeAiModel: null }
+  );
+  assert.equal(pipelineOutcome.ok, true);
+  if (!pipelineOutcome.ok) return;
+
+  // Mode 1: redacted_snippets_only
+  const snippetsOnlyReview = applySourceRetentionPolicy(
+    pipelineOutcome.review,
+    'redacted_snippets_only'
+  );
+  assert.equal(snippetsOnlyReview.retentionPolicy?.mode, 'redacted_snippets_only');
+  assert.equal(snippetsOnlyReview.retentionPolicy?.secretsRedacted, true);
+  assert.equal(snippetsOnlyReview.retentionPolicy?.rawSourcePurged, true);
+  assert.ok((snippetsOnlyReview.retentionPolicy?.redactedCount || 0) >= 1);
+
+  // Verify plaintext sk_live secret is completely absent from both files and finding snippets
+  const serializedSnippetsOnly = JSON.stringify(snippetsOnlyReview);
+  assert.ok(
+    !serializedSnippetsOnly.includes('sk_live_9876543210abcdef123456'),
+    'Live secret must never remain in persisted review record'
+  );
+  // Verify exact line count is preserved so 1-indexed line references remain aligned
+  assert.equal(
+    snippetsOnlyReview.files[0].content.split('\n').length,
+    sampleVulnFile.content.split('\n').length
+  );
+
+  // Mode 2: redacted_full_source
+  const fullRedactedReview = applySourceRetentionPolicy(
+    pipelineOutcome.review,
+    'redacted_full_source'
+  );
+  assert.equal(fullRedactedReview.retentionPolicy?.mode, 'redacted_full_source');
+  assert.equal(fullRedactedReview.retentionPolicy?.rawSourcePurged, false);
+  assert.ok(
+    !JSON.stringify(fullRedactedReview).includes('sk_live_9876543210abcdef123456')
+  );
+});
+
+test('21. Master Backend Engineering Suite: Project CRUD + cascade delete, truthful lifecycle status transitions, rate limiting, duplicate in-flight guard, persistence failure rollback, OpenAPI 3.1, and Edge Functions', async () => {
+  const db = new RlsEnforcedPostgresMirror();
+  const userA: AuthenticatedUser = {
+    id: 'aaaa9999-1111-4111-8111-111111111111',
+    email: 'alice.master@patchguard.dev',
+    accessToken: 'jwt-alice-master',
+    authProvider: 'supabase-jwt',
+  };
+  const userB: AuthenticatedUser = {
+    id: 'bbbb9999-2222-4222-8222-222222222222',
+    email: 'bob.master@patchguard.dev',
+    accessToken: 'jwt-bob-master',
+    authProvider: 'supabase-jwt',
+  };
+
+  const verifyTokenFn = async (token: string): Promise<AuthenticatedUser | null> => {
+    if (token === userA.accessToken) return userA;
+    if (token === userB.accessToken) return userB;
+    return null;
+  };
+
+  // 1. Project CRUD + owner_id reassignment prevention
+  const defaultProject = db.ensureDefaultProject(userA.id);
+  const aliceProjects = db.listProjects(userA.id);
+  assert.equal(aliceProjects.length, 1);
+
+  const fetchedProject = db.getProjectById(userA.id, defaultProject.id);
+  assert.ok(fetchedProject);
+  assert.equal(fetchedProject.id, defaultProject.id);
+
+  // Cross-user getProjectById returns null per RLS SELECT filter
+  assert.equal(db.getProjectById(userB.id, defaultProject.id), null);
+
+  // Update project name, repository, and retentionMode
+  const updatedProject = db.updateProject(userA.id, defaultProject.id, {
+    name: 'Core Security Workspace',
+    repository: 'github.com/alice/core-security',
+    defaultBranch: 'release',
+    retentionMode: 'redacted_full_source',
+  });
+  assert.equal(updatedProject.name, 'Core Security Workspace');
+  assert.equal(updatedProject.repository, 'github.com/alice/core-security');
+  assert.equal(updatedProject.defaultBranch, 'release');
+  assert.equal(updatedProject.retentionMode, 'redacted_full_source');
+
+  // Attempting to reassign owner_id must fail with RlsPolicyViolationError
+  assert.throws(
+    () =>
+      db.updateProject(userA.id, defaultProject.id, {
+        ownerId: userB.id,
+      }),
+    (err: unknown) => err instanceof RlsPolicyViolationError
+  );
+
+  // Cross-user updateProject must fail with RlsPolicyViolationError
+  assert.throws(
+    () =>
+      db.updateProject(userB.id, defaultProject.id, {
+        name: 'Bob Hijack Attempt',
+      }),
+    (err: unknown) => err instanceof RlsPolicyViolationError
+  );
+
+  // 2. Truthful review status transitions (in_progress -> completed_static_only) and timestamps
+  const validReviewPayload = {
+    title: 'Lifecycle & Cascade Verification',
+    objective: 'Verify startedAt, completedAt, and cascade deletion',
+    focusAreas: ['security', 'correctness'] as const,
+    projectId: defaultProject.id,
+    analysisMode: 'static-only' as const,
+    files: [
+      {
+        id: 'f-lifecycle-1',
+        filename: 'src/auth/tokenCheck.ts',
+        language: 'typescript' as const,
+        content: [
+          'export function checkUser(token: string) {',
+          '  const sql = `SELECT * FROM sessions WHERE token = \'${token}\'`;',
+          '  return eval(sql);',
+          '}',
+        ].join('\n'),
+      },
+    ],
+  };
+
+  const observedStatusTransitions: string[] = [];
+  const flowSuccess = await executeAuthenticatedReviewFlow(validReviewPayload, {
+    requestId: 'req-master-success',
+    authorizationHeader: `Bearer ${userA.accessToken}`,
+    verifyAccessTokenFn: verifyTokenFn,
+    database: db,
+    invokeAiModel: null,
+    onStatusTransition: (status) => observedStatusTransitions.push(status),
+  });
+  assert.equal(flowSuccess.ok, true);
+  if (!flowSuccess.ok) return;
+
+  assert.deepEqual(
+    observedStatusTransitions,
+    ['in_progress', 'completed_static_only'],
+    'Review pipeline must transition truthfully from in_progress to completed_static_only'
+  );
+
+  const createdReview = flowSuccess.review;
+  assert.equal(createdReview.status, 'completed_static_only');
+  assert.ok(createdReview.startedAt, 'startedAt timestamp must be populated');
+  assert.ok(createdReview.completedAt, 'completedAt timestamp must be populated');
+  assert.ok(createdReview.findings.length >= 1, 'Static analysis must produce verified findings');
+
+  // Verify getReviewById and getFindingsByReviewId
+  const singleReview = db.getReviewById(userA.id, createdReview.id);
+  assert.ok(singleReview);
+  assert.equal(singleReview.id, createdReview.id);
+  assert.equal(singleReview.status, 'completed_static_only');
+
+  const reviewFindings = db.getFindingsByReviewId(userA.id, createdReview.id);
+  assert.ok(reviewFindings);
+  assert.equal(reviewFindings.length, createdReview.findings.length);
+
+  // Cross-user access to getReviewById and getFindingsByReviewId returns null per RLS SELECT filter
+  assert.equal(db.getReviewById(userB.id, createdReview.id), null);
+  assert.equal(db.getFindingsByReviewId(userB.id, createdReview.id), null);
+
+  // 3. SlidingWindowRateLimiter enforcement (429 RATE_LIMIT_EXCEEDED)
+  const strictRateLimiter = new SlidingWindowRateLimiter(2, 60_000);
+  const rateRun1 = await executeAuthenticatedReviewFlow(
+    { ...validReviewPayload, title: 'Rate Run 1' },
+    {
+      requestId: 'req-rate-1',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+      rateLimiter: strictRateLimiter,
+    }
+  );
+  assert.equal(rateRun1.ok, true);
+
+  const rateRun2 = await executeAuthenticatedReviewFlow(
+    { ...validReviewPayload, title: 'Rate Run 2' },
+    {
+      requestId: 'req-rate-2',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+      rateLimiter: strictRateLimiter,
+    }
+  );
+  assert.equal(rateRun2.ok, true);
+
+  const rateRun3Blocked = await executeAuthenticatedReviewFlow(
+    { ...validReviewPayload, title: 'Rate Run 3 Blocked' },
+    {
+      requestId: 'req-rate-3',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+      rateLimiter: strictRateLimiter,
+    }
+  );
+  assert.equal(rateRun3Blocked.ok, false);
+  if (!rateRun3Blocked.ok) {
+    assert.equal(rateRun3Blocked.httpStatus, 429);
+    assert.equal(rateRun3Blocked.error.category, 'RATE_LIMIT_EXCEEDED');
+    assert.equal(rateRun3Blocked.error.retryable, true);
+  }
+
+  // 4. InFlightReviewDeduplicator (409 DUPLICATE_IN_FLIGHT)
+  const deduplicator = new InFlightReviewDeduplicator();
+  const validatedForFp = validateReviewRequestWithLimits(validReviewPayload, undefined, 'req-fp');
+  assert.equal(validatedForFp.ok, true);
+  if (!validatedForFp.ok) return;
+
+  const fingerprint = InFlightReviewDeduplicator.computeSubmissionFingerprint(
+    userA.id,
+    {
+      ...validatedForFp.validatedPayload,
+      projectId: defaultProject.id,
+    }
+  );
+  assert.equal(deduplicator.tryAcquire(fingerprint), true);
+
+  const duplicateInFlightAttempt = await executeAuthenticatedReviewFlow(validReviewPayload, {
+    requestId: 'req-dup-inflight',
+    authorizationHeader: `Bearer ${userA.accessToken}`,
+    verifyAccessTokenFn: verifyTokenFn,
+    database: db,
+    invokeAiModel: null,
+    deduplicator,
+  });
+  assert.equal(duplicateInFlightAttempt.ok, false);
+  if (!duplicateInFlightAttempt.ok) {
+    assert.equal(duplicateInFlightAttempt.httpStatus, 409);
+    assert.equal(duplicateInFlightAttempt.error.category, 'DUPLICATE_IN_FLIGHT');
+  }
+  deduplicator.release(fingerprint);
+
+  // 5. Persistence failure rollback (500 PERSISTENCE_FAILURE)
+  const reviewsBeforeFail = db.listReviews(userA.id).length;
+  const persistenceFailureAttempt = await executeAuthenticatedReviewFlow(
+    { ...validReviewPayload, title: 'Simulated Persistence Failure' },
+    {
+      requestId: 'req-persist-fail',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+      simulatePersistenceFailure: true,
+    }
+  );
+  assert.equal(persistenceFailureAttempt.ok, false);
+  if (!persistenceFailureAttempt.ok) {
+    assert.equal(persistenceFailureAttempt.httpStatus, 500);
+    assert.equal(persistenceFailureAttempt.error.category, 'PERSISTENCE_FAILURE');
+  }
+  const reviewsAfterFail = db.listReviews(userA.id).length;
+  assert.equal(
+    reviewsAfterFail,
+    reviewsBeforeFail,
+    'Provisional in_progress review must be rolled back if final persistence fails'
+  );
+
+  // 6. Project deletion cascades to child reviews and findings
+  const secondProject = db.createProject(userA.id, {
+    name: 'Disposable Project',
+    repository: 'github.com/alice/disposable',
+  });
+  const subReviewFlow = await executeAuthenticatedReviewFlow(
+    { ...validReviewPayload, projectId: secondProject.id, title: 'Cascaded Review' },
+    {
+      requestId: 'req-cascade-review',
+      authorizationHeader: `Bearer ${userA.accessToken}`,
+      verifyAccessTokenFn: verifyTokenFn,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(subReviewFlow.ok, true);
+  if (!subReviewFlow.ok) return;
+  const cascadedReviewId = subReviewFlow.review.id;
+
+  const delProj = db.deleteProject(userA.id, secondProject.id);
+  assert.equal(delProj, true);
+  assert.equal(db.getProjectById(userA.id, secondProject.id), null);
+  assert.equal(db.getReviewById(userA.id, cascadedReviewId), null);
+  assert.equal(db.getFindingsByReviewId(userA.id, cascadedReviewId), null);
+
+  // 7. Verify OpenAPI 3.1.0, Edge Functions, and SUPABASE_SETUP.md exist and contain required specs
+  const rootDir = process.cwd();
+  const openApiContent = fs.readFileSync(path.join(rootDir, 'openapi.yaml'), 'utf8');
+  assert.ok(openApiContent.includes('openapi: 3.1.0'), 'openapi.yaml must declare OpenAPI 3.1.0');
+  assert.ok(openApiContent.includes('/api/projects/{projectId}:'));
+  assert.ok(openApiContent.includes('/api/reviews/{reviewId}/retry:'));
+  assert.ok(openApiContent.includes('/functions/v1/review-code:'));
+
+  const analyzeReviewFn = fs.readFileSync(
+    path.join(rootDir, 'supabase/functions/analyze-review/index.ts'),
+    'utf8'
+  );
+  assert.ok(analyzeReviewFn.includes('Deno.serve'));
+  assert.ok(analyzeReviewFn.includes('GEMINI_API_KEY'));
+
+  const reviewCodeFn = fs.readFileSync(
+    path.join(rootDir, 'supabase/functions/review-code/index.ts'),
+    'utf8'
+  );
+  assert.ok(reviewCodeFn.includes('Deno.serve'));
+  assert.ok(reviewCodeFn.includes('handleAnalyzeReviewEdgeRequest'));
+
+  const healthFn = fs.readFileSync(
+    path.join(rootDir, 'supabase/functions/health/index.ts'),
+    'utf8'
+  );
+  assert.ok(healthFn.includes('Deno.serve'));
+
+  const setupDoc = fs.readFileSync(path.join(rootDir, 'SUPABASE_SETUP.md'), 'utf8');
+  assert.ok(setupDoc.includes('## Step 1: Create Your Supabase Project'));
+  assert.ok(setupDoc.includes('## Step 13: Deploying Frontend & Backend to Production'));
+});
 
 
 

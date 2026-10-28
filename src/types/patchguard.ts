@@ -75,12 +75,14 @@ export interface ReviewFinding {
 }
 
 export type ReviewExecutionStatus =
+  | 'queued'
+  | 'processing'
+  | 'in_progress'
   | 'completed'
   | 'completed_static_only'
   | 'completed_with_warnings'
   | 'failed'
-  | 'cancelled'
-  | 'in_progress';
+  | 'cancelled';
 
 export interface AnalysisStageReport {
   stageId: string;
@@ -99,6 +101,12 @@ export interface AnalysisStageReport {
 
 export type ApiErrorCategory =
   | 'BACKEND_UNAVAILABLE'
+  | 'AUTH_REQUIRED'
+  | 'FORBIDDEN_PROJECT'
+  | 'NOT_FOUND'
+  | 'RATE_LIMIT_EXCEEDED'
+  | 'DUPLICATE_IN_FLIGHT'
+  | 'PAYLOAD_TOO_LARGE'
   | 'INVALID_REQUEST'
   | 'MISSING_SERVER_CONFIG'
   | 'AI_SERVICE_UNAVAILABLE'
@@ -108,6 +116,36 @@ export type ApiErrorCategory =
   | 'INVALID_MODEL_RESPONSE'
   | 'PERSISTENCE_FAILURE'
   | 'INCOMPLETE_ANALYSIS';
+
+export type SourceRetentionMode = 'redacted_snippets_only' | 'redacted_full_source';
+
+export interface SourceRetentionMetadata {
+  mode: SourceRetentionMode;
+  secretsRedacted: boolean;
+  redactedCount: number;
+  rawSourcePurged: boolean;
+  appliedAt: string;
+}
+
+export interface ProjectRecord {
+  id: string;
+  ownerId: string;
+  name: string;
+  slug: string;
+  repository: string;
+  defaultBranch: string;
+  retentionMode: SourceRetentionMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  accessToken: string;
+  expiresAt?: number;
+  authProvider: 'supabase-jwt' | 'local-session-jwt';
+}
 
 export interface StructuredApiError {
   category: ApiErrorCategory;
@@ -123,8 +161,13 @@ export interface StructuredApiError {
 
 export interface ReviewRecord {
   id: string;
+  projectId?: string;
+  projectName?: string;
+  ownerId?: string;
   title: string;
   createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
   durationMs: number;
   status: ReviewExecutionStatus;
   objective: string;
@@ -136,10 +179,13 @@ export interface ReviewRecord {
   modelUsed: string;
   warningMessage?: string;
   errorDetails?: StructuredApiError;
+  retentionPolicy?: SourceRetentionMetadata;
   isDemoRecord?: boolean;
 }
 
 export interface ReviewRequestPayload {
+  projectId?: string;
+  retentionMode?: SourceRetentionMode;
   title: string;
   objective: string;
   focusAreas: FindingCategory[];
@@ -229,7 +275,12 @@ export interface SystemHealthStatus {
   aiModelId: string;
   staticEngineAvailable: boolean;
   staticEngineVersion: string;
-  persistenceMode: 'browser-local-storage' | 'memory-fallback';
+  supabaseConfigured?: boolean;
+  supabaseMode?: 'live-supabase' | 'local-rls-mirror';
+  persistenceMode:
+    | 'supabase-postgres-rls'
+    | 'browser-local-storage'
+    | 'memory-fallback';
   persistenceHealthy: boolean;
 }
 
@@ -240,3 +291,4 @@ export type ActiveScreen =
   | 'history'
   | 'evaluation-lab'
   | 'settings';
+

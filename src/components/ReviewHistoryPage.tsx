@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ProjectRecord,
   ReviewExecutionStatus,
   ReviewRecord,
   SeverityLevel,
@@ -7,6 +8,7 @@ import {
 } from '../types/patchguard';
 import { computeSeverityDistribution } from '../lib/evaluationMath';
 import { compareSeverity } from '../lib/staticAnalyzer';
+import { isLiveSupabaseClientConfigured } from '../lib/supabaseClient';
 import { ReviewStatusLabel, SeverityLabel } from './SeverityIndicator';
 import {
   ArrowUpDown,
@@ -18,6 +20,7 @@ import {
 
 interface ReviewHistoryPageProps {
   reviews: ReviewRecord[];
+  projects?: ProjectRecord[];
   isLocalStorageAvailable: boolean;
   onOpenReview: (review: ReviewRecord) => void;
   onDeleteReview: (reviewId: string) => void;
@@ -28,12 +31,14 @@ type SortField = 'createdAt' | 'findingsCount' | 'durationMs' | 'highestSeverity
 
 export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
   reviews,
+  projects = [],
   isLocalStorageAvailable,
   onOpenReview,
   onDeleteReview,
   onStartNewReview,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<ReviewExecutionStatus | 'all'>('all');
   const [languageFilter, setLanguageFilter] = useState<SupportedLanguage | 'all'>('all');
   const [sortField, setSortField] = useState<SortField>('createdAt');
@@ -45,10 +50,14 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
   const pageSize = 10;
 
   const hasActiveFilters =
-    searchQuery.trim() !== '' || statusFilter !== 'all' || languageFilter !== 'all';
+    searchQuery.trim() !== '' ||
+    projectFilter !== 'all' ||
+    statusFilter !== 'all' ||
+    languageFilter !== 'all';
 
   const resetFilters = () => {
     setSearchQuery('');
+    setProjectFilter('all');
     setStatusFilter('all');
     setLanguageFilter('all');
     setPage(1);
@@ -68,6 +77,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
   const filteredAndSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const list = reviews.filter((r) => {
+      if (projectFilter !== 'all' && r.projectId !== projectFilter) return false;
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (
         languageFilter !== 'all' &&
@@ -76,7 +86,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
         return false;
       }
       if (q) {
-        const hay = `${r.id} ${r.title} ${r.requestId} ${r.files
+        const hay = `${r.id} ${r.title} ${r.projectName || ''} ${r.requestId} ${r.files
           .map((f) => f.filename)
           .join(' ')}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -103,7 +113,7 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
     });
 
     return list;
-  }, [reviews, searchQuery, statusFilter, languageFilter, sortField, sortAsc]);
+  }, [reviews, searchQuery, projectFilter, statusFilter, languageFilter, sortField, sortAsc]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -144,8 +154,10 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
           <span className="break-words min-w-0">
             Persistence Adapter:{' '}
             <strong className="text-[var(--pg-text-primary)]">
-              {isLocalStorageAvailable
-                ? 'Browser Local Storage (Single-Browser Scope — No Cross-Device Sync)'
+              {isLiveSupabaseClientConfigured
+                ? 'Supabase PostgreSQL + RLS (auth.uid() = owner_id)'
+                : isLocalStorageAvailable
+                ? 'Authenticated RLS Backend + Local Cache'
                 : 'Volatile Session Memory Fallback'}
             </strong>
           </span>
@@ -158,8 +170,8 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
           <Search className="w-3.5 h-3.5 text-[var(--pg-text-muted)] absolute left-3 top-2.5" />
           <input
             type="search"
-            aria-label="Search review records by ID, title, or filename"
-            placeholder="Search by review ID, PR title, request ID, or filename..."
+            aria-label="Search review records by ID, title, project, or filename"
+            placeholder="Search by review ID, PR title, project, request ID, or filename..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
@@ -170,6 +182,24 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs font-mono min-w-0">
+          {projects.length > 0 && (
+            <select
+              aria-label="Filter by project"
+              value={projectFilter}
+              onChange={(e) => {
+                setProjectFilter(e.target.value);
+                setPage(1);
+              }}
+              className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)] min-w-0 max-w-full truncate"
+            >
+              <option value="all">Project: All ({projects.length})</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Project: {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           <select
             aria-label="Filter by completion status"
             value={statusFilter}
@@ -471,8 +501,17 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
                     {isInspected && (
                       <tr className="bg-[var(--pg-bg-workspace)] font-mono text-[11px] text-[var(--pg-text-secondary)]">
                         <td colSpan={9} className="p-3 space-y-1">
-                          <div>Full Review ID: {rev.id} · Request ID: {rev.requestId}</div>
+                          <div>
+                            Full Review ID: {rev.id} · Request ID: {rev.requestId}
+                            {rev.projectName ? ` · Project: ${rev.projectName}` : ''}
+                          </div>
                           <div>Model & Static Stack: {rev.modelUsed}</div>
+                          <div>
+                            Retention Policy:{' '}
+                            {rev.retentionPolicy?.mode || 'redacted_snippets_only'} (Secrets
+                            Redacted: {rev.retentionPolicy?.secretsRedacted !== false ? 'Yes' : 'No'}
+                            )
+                          </div>
                           <div>
                             Full File Paths:{' '}
                             {rev.files.map((f) => `${f.filename} (${f.lineCount}L)`).join(' | ')}

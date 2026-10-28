@@ -1,0 +1,77 @@
+import {
+  AI_MODEL_ID,
+  isConfiguredGeminiApiKey,
+} from '../../../src/lib/reviewOrchestrator.ts';
+import { STATIC_ANALYZER_VERSION } from '../../../src/lib/staticAnalyzer.ts';
+import {
+  isConfiguredSupabaseAnonKey,
+  isConfiguredSupabaseUrl,
+} from '../../../src/lib/supabaseBackendCore.ts';
+
+declare const Deno:
+  | {
+      env: { get(key: string): string | undefined };
+      serve: (handler: (req: Request) => Response | Promise<Response>) => void;
+    }
+  | undefined;
+
+function readServerEnv(name: string): string | undefined {
+  if (typeof Deno !== 'undefined' && Deno?.env) {
+    return Deno.env.get(name);
+  }
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env[name];
+  }
+  return undefined;
+}
+
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-request-id',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+};
+
+export async function handleHealthEdgeRequest(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS });
+  }
+
+  const requestId =
+    req.headers.get('x-request-id') ||
+    `edge-health-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const supabaseUrl = readServerEnv('SUPABASE_URL');
+  const supabaseAnonKey = readServerEnv('SUPABASE_ANON_KEY');
+  const geminiKey = readServerEnv('GEMINI_API_KEY');
+
+  const supabaseConfigured =
+    isConfiguredSupabaseUrl(supabaseUrl) && isConfiguredSupabaseAnonKey(supabaseAnonKey);
+  const aiConfigured = isConfiguredGeminiApiKey(geminiKey);
+
+  return new Response(
+    JSON.stringify({
+      status: 'ok',
+      requestId,
+      timestamp: new Date().toISOString(),
+      aiProviderConfigured: aiConfigured,
+      aiModelId: AI_MODEL_ID,
+      staticEngineAvailable: true,
+      staticEngineVersion: STATIC_ANALYZER_VERSION,
+      supabaseConfigured,
+      supabaseMode: supabaseConfigured ? 'live-supabase' : 'local-rls-mirror',
+    }),
+    {
+      status: 200,
+      headers: {
+        ...CORS_HEADERS,
+        'Content-Type': 'application/json',
+        'X-Request-Id': requestId,
+      },
+    }
+  );
+}
+
+if (typeof Deno !== 'undefined' && typeof Deno?.serve === 'function') {
+  Deno.serve(handleHealthEdgeRequest);
+}

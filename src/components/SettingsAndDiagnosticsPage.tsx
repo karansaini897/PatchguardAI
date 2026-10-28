@@ -344,19 +344,24 @@ export const SettingsAndDiagnosticsPage: React.FC<SettingsAndDiagnosticsPageProp
           {/* 4. Persistence Adapter */}
           <div className="p-4 space-y-1.5 min-w-0">
             <div className="font-mono text-[11px] text-[var(--pg-text-muted)]">
-              PERSISTENCE ADAPTER
+              PERSISTENCE & RLS ADAPTER
             </div>
             <div
               className={`font-mono text-sm font-semibold ${
                 health?.persistenceHealthy ? 'text-[var(--pg-success)]' : 'text-[var(--pg-warning)]'
               }`}
             >
-              {health?.persistenceMode === 'browser-local-storage'
+              {health?.supabaseConfigured
+                ? '✓ Supabase Postgres (RLS)'
+                : health?.persistenceMode === 'supabase-postgres-rls'
+                ? '✓ RLS Backend + Local Sync'
+                : health?.persistenceMode === 'browser-local-storage'
                 ? '✓ Browser localStorage'
                 : '△ Memory Fallback'}
             </div>
             <p className="text-[var(--pg-text-secondary)] leading-relaxed">
-              {reviews.length} review record(s) stored in local browser ledger.
+              {reviews.length} review record(s) persisted under Row Level Security (auth.uid() =
+              owner_id) with secret redaction active.
             </p>
           </div>
         </div>

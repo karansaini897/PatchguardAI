@@ -179,6 +179,16 @@ export const ReviewStatusLabel: React.FC<{ status: ReviewExecutionStatus }> = ({
       symbol: '⋯',
       color: 'text-[var(--pg-accent-text)]',
     },
+    processing: {
+      label: 'Processing',
+      symbol: '⋯',
+      color: 'text-[var(--pg-accent-text)]',
+    },
+    queued: {
+      label: 'Queued',
+      symbol: '◦',
+      color: 'text-[var(--pg-text-secondary)]',
+    },
   };
   const c = config[status] || config.completed;
   return (

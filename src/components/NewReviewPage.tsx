@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import {
   FindingCategory,
+  ProjectRecord,
   ReviewRecord,
   ReviewRequestPayload,
+  SourceRetentionMode,
   StructuredApiError,
   SupportedLanguage,
 } from '../types/patchguard';
@@ -10,16 +12,24 @@ import { CURATED_CODE_SNIPPETS, CodeExampleSnippet } from '../lib/curatedData';
 import { executeCodeReview } from '../lib/apiClient';
 import {
   AlertTriangle,
-  Code2,
   FilePlus,
+  FolderGit2,
   Loader2,
   Play,
+  Plus,
   RotateCcw,
-  Trash2,
 } from 'lucide-react';
 
 interface NewReviewPageProps {
   onReviewCompleted: (review: ReviewRecord) => void;
+  projects?: ProjectRecord[];
+  activeProjectId?: string;
+  onSelectProject?: (projectId: string) => void;
+  onCreateProject?: (input: {
+    name: string;
+    repository: string;
+    retentionMode: SourceRetentionMode;
+  }) => Promise<ProjectRecord | null>;
 }
 
 const ALL_FOCUS_AREAS: Array<{ id: FindingCategory; label: string; hint: string }> = [
@@ -42,20 +52,37 @@ const OBJECTIVE_PRESETS = [
   'Investigate sequential N+1 query performance bottlenecks.',
 ];
 
-export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted }) => {
+export const NewReviewPage: React.FC<NewReviewPageProps> = ({
+  onReviewCompleted,
+  projects = [],
+  activeProjectId,
+  onSelectProject,
+  onCreateProject,
+}) => {
   const defaultSnippet = CURATED_CODE_SNIPPETS[0];
+  const selectedProject =
+    projects.find((p) => p.id === activeProjectId) || projects[0] || null;
 
   const [loadedSnippetId, setLoadedSnippetId] = useState<string>(defaultSnippet.id);
   const [title, setTitle] = useState<string>(defaultSnippet.title);
   const [objective, setObjective] = useState<string>(defaultSnippet.objective);
   const [focusAreas, setFocusAreas] = useState<FindingCategory[]>(defaultSnippet.focusAreas);
   const [analysisMode, setAnalysisMode] = useState<'hybrid' | 'static-only' | 'ai-only'>('hybrid');
+  const [retentionMode, setRetentionMode] = useState<SourceRetentionMode>(
+    selectedProject?.retentionMode || 'redacted_snippets_only'
+  );
   const [files, setFiles] = useState(defaultSnippet.files);
   const [activeFileIdx, setActiveFileIdx] = useState<number>(0);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [pendingSnippetConfirm, setPendingSnippetConfirm] = useState<CodeExampleSnippet | null>(
     null
   );
+
+  // Project creation inline form state
+  const [isCreatingProject, setIsCreatingProject] = useState<boolean>(false);
+  const [newProjectName, setNewProjectName] = useState<string>('');
+  const [newProjectRepo, setNewProjectRepo] = useState<string>('');
+  const [isSavingProject, setIsSavingProject] = useState<boolean>(false);
 
   // Submission & Error states
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -178,6 +205,8 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     setIsSubmitting(true);
 
     const payload: ReviewRequestPayload = {
+      projectId: selectedProject?.id,
+      retentionMode,
       title: title.trim() || `Review of ${files[0].filename}`,
       objective:
         objective.trim() ||
@@ -192,12 +221,36 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
     setSubmittingMode(null);
 
     if (!result.ok) {
-      setApiError((result as { ok: false; error: StructuredApiError }).error);
+      setApiError(
+        (result as { ok: false; error: StructuredApiError; failedReview?: ReviewRecord }).error
+      );
       return;
     }
 
     setIsDirty(false);
     onReviewCompleted(result.review);
+  };
+
+  const handleCreateProjectInline = async () => {
+    if (!onCreateProject || isSavingProject) return;
+    if (!newProjectName.trim()) {
+      setValidationError('Enter a project name before creating a repository workspace.');
+      return;
+    }
+    setValidationError(null);
+    setIsSavingProject(true);
+    const created = await onCreateProject({
+      name: newProjectName.trim(),
+      repository: newProjectRepo.trim() || 'github.com/org/service',
+      retentionMode,
+    });
+    setIsSavingProject(false);
+    if (created) {
+      onSelectProject?.(created.id);
+      setNewProjectName('');
+      setNewProjectRepo('');
+      setIsCreatingProject(false);
+    }
   };
 
   const activeLines = activeFile ? activeFile.content.split(/\r?\n/) : [];
@@ -516,8 +569,109 @@ export const NewReviewPage: React.FC<NewReviewPageProps> = ({ onReviewCompleted 
           </div>
         </div>
 
-        {/* Right 4 Columns: Review Title, Objective, Focus Categories & Execution */}
+        {/* Right 4 Columns: Project Scope, Review Title, Objective, Focus Categories & Execution */}
         <div className="lg:col-span-4 border border-[var(--pg-border-default)] bg-[var(--pg-bg-surface)] p-4 space-y-5 min-w-0">
+          {/* Supabase Project Ownership & Retention Policy Scope */}
+          <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] space-y-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="review-project-select"
+                className="font-mono text-[11px] font-semibold text-[var(--pg-text-secondary)] inline-flex items-center gap-1.5"
+              >
+                <FolderGit2 className="w-3.5 h-3.5 text-[var(--pg-info)]" />
+                <span>Target Project (RLS Scope)</span>
+              </label>
+              {onCreateProject && (
+                <button
+                  type="button"
+                  onClick={() => setIsCreatingProject((prev) => !prev)}
+                  className="font-mono text-[11px] text-[var(--pg-info)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>{isCreatingProject ? 'Cancel' : 'New Project'}</span>
+                </button>
+              )}
+            </div>
+
+            {projects.length > 0 && !isCreatingProject && (
+              <select
+                id="review-project-select"
+                value={selectedProject?.id || ''}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  onSelectProject?.(nextId);
+                  const found = projects.find((p) => p.id === nextId);
+                  if (found) {
+                    setRetentionMode(found.retentionMode);
+                  }
+                }}
+                className="w-full px-2.5 py-1.5 font-mono text-xs bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.repository || p.slug})
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {isCreatingProject && (
+              <div className="space-y-2 pt-1 border-t border-[var(--pg-border-subtle)]">
+                <input
+                  type="text"
+                  aria-label="New project name"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Project Name (e.g. Settlement Ledger Service)"
+                  className="w-full px-2.5 py-1.5 font-mono text-xs bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+                />
+                <input
+                  type="text"
+                  aria-label="New project repository"
+                  value={newProjectRepo}
+                  onChange={(e) => setNewProjectRepo(e.target.value)}
+                  placeholder="Repository (e.g. github.com/acme/ledger)"
+                  className="w-full px-2.5 py-1.5 font-mono text-xs bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+                />
+                <button
+                  type="button"
+                  disabled={isSavingProject}
+                  onClick={handleCreateProjectInline}
+                  className="w-full py-1.5 px-3 font-mono text-xs bg-[var(--pg-accent)] text-[var(--pg-text-inverse)] font-semibold cursor-pointer"
+                >
+                  {isSavingProject ? 'Creating Project...' : 'Create & Select Project'}
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-1 pt-1 border-t border-[var(--pg-border-subtle)]">
+              <label
+                htmlFor="review-retention-select"
+                className="block font-mono text-[10.5px] text-[var(--pg-text-muted)] uppercase"
+              >
+                Source-Code Retention Policy
+              </label>
+              <select
+                id="review-retention-select"
+                value={retentionMode}
+                onChange={(e) => setRetentionMode(e.target.value as SourceRetentionMode)}
+                className="w-full px-2.5 py-1 font-mono text-[11px] bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
+              >
+                <option value="redacted_snippets_only">
+                  Redacted Snippets Only (Default · Purges Non-Evidence Lines)
+                </option>
+                <option value="redacted_full_source">
+                  Redacted Full Source (Retains File View with Secrets Redacted)
+                </option>
+              </select>
+              <p className="text-[11px] text-[var(--pg-text-secondary)] leading-snug">
+                {retentionMode === 'redacted_snippets_only'
+                  ? 'Redacts live secrets and stores only file hashes + ±4-line evidence windows around verified findings in Supabase.'
+                  : 'Redacts live secrets ([REDACTED_SECRET]) while storing the full file snapshot in Supabase for cross-device browsing.'}
+              </p>
+            </div>
+          </div>
+
           <div>
             <label
               htmlFor="review-title-input"

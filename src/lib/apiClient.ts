@@ -6,6 +6,11 @@ import {
   SystemHealthStatus,
 } from '../types/patchguard';
 import { persistence } from './persistence';
+import {
+  getActiveAccessToken,
+  getReviewAnalysisEndpoint,
+  isLiveSupabaseClientConfigured,
+} from './supabaseClient';
 
 export interface ApiReviewResponse {
   review: ReviewRecord;
@@ -29,6 +34,9 @@ export async function fetchSystemHealth(): Promise<SystemHealthStatus> {
       throw new Error(`HTTP ${res.status}`);
     }
     const data = await res.json();
+    const supabaseConfigured = Boolean(
+      data.supabaseConfigured || isLiveSupabaseClientConfigured
+    );
     return {
       checkedAt: new Date().toISOString(),
       backendReachable: true,
@@ -43,8 +51,10 @@ export async function fetchSystemHealth(): Promise<SystemHealthStatus> {
       aiModelId: data.aiModelId || 'gemini-3.1-flash-lite',
       staticEngineAvailable: Boolean(data.staticEngineAvailable),
       staticEngineVersion: data.staticEngineVersion || 'pg-static-ast-1.4.2',
-      persistenceMode: storageHealthy ? 'browser-local-storage' : 'memory-fallback',
-      persistenceHealthy: storageHealthy,
+      supabaseConfigured,
+      supabaseMode: supabaseConfigured ? 'live-supabase' : 'local-rls-mirror',
+      persistenceMode: 'supabase-postgres-rls',
+      persistenceHealthy: true,
     };
   } catch {
     return {
@@ -57,6 +67,8 @@ export async function fetchSystemHealth(): Promise<SystemHealthStatus> {
       aiModelId: 'gemini-3.1-flash-lite',
       staticEngineAvailable: false,
       staticEngineVersion: 'pg-static-ast-1.4.2',
+      supabaseConfigured: isLiveSupabaseClientConfigured,
+      supabaseMode: isLiveSupabaseClientConfigured ? 'live-supabase' : 'local-rls-mirror',
       persistenceMode: storageHealthy ? 'browser-local-storage' : 'memory-fallback',
       persistenceHealthy: storageHealthy,
     };
@@ -113,21 +125,36 @@ export async function probeAiConnectivity(): Promise<{
 }
 
 export async function executeCodeReview(
-  payload: ReviewRequestPayload
-): Promise<{ ok: true; review: ReviewRecord } | { ok: false; error: StructuredApiError }> {
+  payload: ReviewRequestPayload,
+  accessTokenOverride?: string | null
+): Promise<
+  | { ok: true; review: ReviewRecord }
+  | { ok: false; error: StructuredApiError; failedReview?: ReviewRecord }
+> {
   const clientRequestId = generateClientRequestId();
   const start = performance.now();
+  const endpoint = getReviewAnalysisEndpoint();
 
   try {
+    const token =
+      accessTokenOverride !== undefined
+        ? accessTokenOverride
+        : await getActiveAccessToken();
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Request-Id': clientRequestId,
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 35000);
 
-    const response = await fetch('/api/review', {
+    const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Request-Id': clientRequestId,
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -137,23 +164,39 @@ export async function executeCodeReview(
     const body = await response.json().catch(() => null);
 
     if (!response.ok || !body || body.error) {
+      const defaultCategory =
+        response.status === 401
+          ? 'AUTH_REQUIRED'
+          : response.status === 403
+          ? 'FORBIDDEN_PROJECT'
+          : response.status === 413
+          ? 'PAYLOAD_TOO_LARGE'
+          : response.status === 429
+          ? 'AI_RATE_LIMIT'
+          : 'INVALID_REQUEST';
+
       const apiErr: StructuredApiError = body?.error || {
-        category: response.status === 429 ? 'AI_RATE_LIMIT' : 'INVALID_REQUEST',
+        category: defaultCategory,
         message: body?.message || `Review analysis failed with HTTP ${response.status}`,
         technicalDetail:
-          body?.technicalDetail || `Endpoint POST /api/review returned status ${response.status}.`,
+          body?.technicalDetail || `Endpoint POST ${endpoint} returned status ${response.status}.`,
         remediationStep:
-          'Verify input source code and backend status in Diagnostics, or retry with Static Analysis mode.',
+          response.status === 401
+            ? 'Sign in with an active account session before running code reviews.'
+            : response.status === 403
+            ? 'Select a project owned by your authenticated user account.'
+            : 'Verify input source code and backend status in Diagnostics, or retry with Static Analysis mode.',
         requestId: body?.requestId || clientRequestId,
         timestamp: new Date().toISOString(),
         retryable: response.status >= 500 || response.status === 429,
+        httpStatus: response.status,
       };
 
       persistence.appendDiagnostic({
         id: `diag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         timestamp: new Date().toISOString(),
         requestId: apiErr.requestId,
-        endpoint: 'POST /api/review',
+        endpoint: `POST ${endpoint}`,
         durationMs,
         stage: 'review-execution',
         status: 'failed',
@@ -163,7 +206,7 @@ export async function executeCodeReview(
         retryAvailable: apiErr.retryable,
       });
 
-      return { ok: false, error: apiErr };
+      return { ok: false, error: apiErr, failedReview: body?.failedReview };
     }
 
     const review: ReviewRecord = body.review;
@@ -173,7 +216,7 @@ export async function executeCodeReview(
       timestamp: new Date().toISOString(),
       requestId: review.requestId || clientRequestId,
       reviewId: review.id,
-      endpoint: 'POST /api/review',
+      endpoint: `POST ${endpoint}`,
       durationMs: review.durationMs || durationMs,
       stage: 'complete-pipeline',
       status: review.status === 'completed_with_warnings' ? 'warning' : 'succeeded',
@@ -194,11 +237,11 @@ export async function executeCodeReview(
         ? 'Analysis request timed out after 35,000ms.'
         : 'Unable to reach PatchGuard backend analysis service.',
       technicalDetail: isAbort
-        ? 'Client AbortController triggered at 35s deadline while waiting for /api/review.'
-        : `Fetch to POST /api/review failed (${err?.message || 'network error'}).`,
+        ? `Client AbortController triggered at 35s deadline while waiting for ${endpoint}.`
+        : `Fetch to POST ${endpoint} failed (${err?.message || 'network error'}).`,
       remediationStep: isAbort
         ? 'Reduce the size of the submitted file or retry using Deterministic Static Analysis mode.'
-        : 'Confirm the Express server is running on port 3000 and check System Diagnostics.',
+        : 'Confirm the backend server or Supabase Edge Function is reachable and check System Diagnostics.',
       requestId: clientRequestId,
       timestamp: new Date().toISOString(),
       retryable: true,
@@ -208,7 +251,7 @@ export async function executeCodeReview(
       id: `diag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
       requestId: clientRequestId,
-      endpoint: 'POST /api/review',
+      endpoint: `POST ${endpoint}`,
       durationMs,
       stage: 'network-transport',
       status: 'failed',
