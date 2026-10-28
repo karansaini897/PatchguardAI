@@ -453,10 +453,16 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             </span>
                           )}
                         </div>
-                        <div className="text-xs font-semibold text-[var(--pg-text-primary)] truncate">
+                        <div
+                          className="text-xs font-semibold text-[var(--pg-text-primary)] truncate"
+                          title={finding.title}
+                        >
                           {finding.title}
                         </div>
-                        <div className="text-[11px] font-mono text-[var(--pg-text-muted)] truncate">
+                        <div
+                          className="text-[11px] font-mono text-[var(--pg-text-muted)] truncate"
+                          title={`Review: ${review.title} (${review.id})`}
+                        >
                           Review: {review.title} ({review.id})
                         </div>
                       </div>
@@ -520,7 +526,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                         <span>·</span>
                         <span>{rev.durationMs}ms</span>
                       </div>
-                      <div className="text-xs font-semibold text-[var(--pg-text-primary)] truncate">
+                      <div
+                        className="text-xs font-semibold text-[var(--pg-text-primary)] truncate"
+                        title={rev.title}
+                      >
                         {rev.title}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 font-mono text-xs">

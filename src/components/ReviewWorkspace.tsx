@@ -101,10 +101,42 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
 
   // Mobile/Tablet active sub-pane ('source' | 'findings' | 'evidence')
   const [mobilePane, setMobilePane] = useState<'source' | 'findings' | 'evidence'>('findings');
+  const mobileTabRefs = useRef<
+    Record<'source' | 'findings' | 'evidence', HTMLButtonElement | null>
+  >({
+    source: null,
+    findings: null,
+    evidence: null,
+  });
   const [showMobileFilters, setShowMobileFilters] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedRemediationId, setCopiedRemediationId] = useState<string | null>(null);
   const [liveStatusAnnouncement, setLiveStatusAnnouncement] = useState<string>('');
+
+  const handleMobileTabKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    currentPane: 'source' | 'findings' | 'evidence'
+  ) => {
+    const order: Array<'source' | 'findings' | 'evidence'> = ['source', 'findings', 'evidence'];
+    const idx = order.indexOf(currentPane);
+    let nextPane: 'source' | 'findings' | 'evidence' | null = null;
+
+    if (e.key === 'ArrowRight') {
+      nextPane = order[(idx + 1) % order.length];
+    } else if (e.key === 'ArrowLeft') {
+      nextPane = order[(idx - 1 + order.length) % order.length];
+    } else if (e.key === 'Home') {
+      nextPane = order[0];
+    } else if (e.key === 'End') {
+      nextPane = order[order.length - 1];
+    }
+
+    if (nextPane) {
+      e.preventDefault();
+      setMobilePane(nextPane);
+      mobileTabRefs.current[nextPane]?.focus();
+    }
+  };
 
   // Defensively verify all findings against the exact source files in this review
   const verifiedFindings = useMemo(() => {
@@ -385,6 +417,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.getAttribute('role') === 'separator' ||
+          target.getAttribute('role') === 'tab' ||
           target.isContentEditable)
       ) {
         return;
@@ -401,7 +434,11 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           e.preventDefault();
           handleStepFinding(-1);
         }
-      } else if (e.key === 'Escape' && selectedFindingId) {
+      } else if (
+        e.key === 'Escape' &&
+        selectedFindingId &&
+        !document.getElementById('pg-mobile-nav-drawer')
+      ) {
         e.preventDefault();
         setSelectedFindingId(null);
         setLiveStatusAnnouncement('Deselected active finding.');
@@ -576,7 +613,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
         <div className="min-w-0 flex-1 w-full">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1
-              className="text-sm font-semibold text-[var(--pg-text-primary)] truncate max-w-full"
+              className="text-sm font-semibold text-[var(--pg-text-primary)] break-words max-w-full"
               title={review.title}
             >
               {review.title}
@@ -587,7 +624,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             </span>
           </div>
           <p
-            className="hidden sm:block text-xs text-[var(--pg-text-secondary)] truncate mt-0.5"
+            className="text-xs text-[var(--pg-text-secondary)] line-clamp-2 sm:truncate mt-0.5 break-words"
             title={review.objective}
           >
             Objective: {review.objective}
@@ -682,14 +719,20 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 className="p-2.5 bg-[var(--pg-bg-surface)] border border-[var(--pg-border-default)] space-y-1"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-[var(--pg-text-primary)] truncate">
+                  <span
+                    className="font-semibold text-[var(--pg-text-primary)] truncate"
+                    title={st.name}
+                  >
                     {st.name}
                   </span>
                   <span className={`font-semibold uppercase ${statusColor}`}>
                     {st.status}
                   </span>
                 </div>
-                <div className="text-[11px] text-[var(--pg-text-secondary)] truncate">
+                <div
+                  className="text-[11px] text-[var(--pg-text-secondary)] truncate"
+                  title={`Engine: ${st.engine}`}
+                >
                   Engine: {st.engine}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--pg-text-muted)] tabular-nums pt-0.5">
@@ -722,11 +765,17 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           className="grid grid-cols-3 w-full"
         >
           <button
+            ref={(el) => {
+              mobileTabRefs.current.source = el;
+            }}
+            id="pg-tab-source"
             type="button"
             role="tab"
             aria-selected={mobilePane === 'source'}
+            aria-controls="pg-panel-source"
             onClick={() => setMobilePane('source')}
-            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            onKeyDown={(e) => handleMobileTabKeyDown(e, 'source')}
+            className={`py-2.5 px-1.5 sm:px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'source'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
@@ -735,11 +784,17 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             Source ({review.files.length})
           </button>
           <button
+            ref={(el) => {
+              mobileTabRefs.current.findings = el;
+            }}
+            id="pg-tab-findings"
             type="button"
             role="tab"
             aria-selected={mobilePane === 'findings'}
+            aria-controls="pg-panel-findings"
             onClick={() => setMobilePane('findings')}
-            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            onKeyDown={(e) => handleMobileTabKeyDown(e, 'findings')}
+            className={`py-2.5 px-1.5 sm:px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'findings'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
@@ -748,12 +803,18 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             Findings ({filteredFindings.length})
           </button>
           <button
+            ref={(el) => {
+              mobileTabRefs.current.evidence = el;
+            }}
+            id="pg-tab-evidence"
             type="button"
             role="tab"
             aria-label="Evidence Details"
             aria-selected={mobilePane === 'evidence'}
+            aria-controls="pg-panel-evidence"
             onClick={() => setMobilePane('evidence')}
-            className={`py-2.5 px-1.5 sm:px-2 text-[11px] sm:text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
+            onKeyDown={(e) => handleMobileTabKeyDown(e, 'evidence')}
+            className={`py-2.5 px-1.5 sm:px-2 text-xs font-mono border-b-2 cursor-pointer transition-colors truncate ${
               mobilePane === 'evidence'
                 ? 'border-[var(--pg-accent)] bg-[var(--pg-bg-surface)] text-[var(--pg-text-primary)] font-semibold'
                 : 'border-transparent text-[var(--pg-text-secondary)] hover:text-[var(--pg-text-primary)]'
@@ -769,7 +830,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
           <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-t border-[var(--pg-border-subtle)] flex items-center justify-between gap-2 text-[11px] font-mono w-full">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <SeverityLabel severity={selectedFinding.severity} compact />
-              <span className="text-[var(--pg-text-primary)] truncate">
+              <span
+                className="text-[var(--pg-text-primary)] truncate"
+                title={`${selectedFinding.title} (${selectedFinding.location.filename}:L${selectedFinding.location.startLine})`}
+              >
                 {selectedFinding.title}
               </span>
             </div>
@@ -780,6 +844,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => handleNavigateToFindingSource(selectedFinding)}
+                    title={`View in ${selectedFindingTargetFile.filename} at line ${selectedFinding.location.startLine}`}
                     className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] cursor-pointer"
                   >
                     Source L{selectedFinding.location.startLine}
@@ -789,6 +854,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                 <button
                   type="button"
                   onClick={() => setMobilePane('evidence')}
+                  title={`Inspect full evidence details for: ${selectedFinding.title}`}
                   className="px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] cursor-pointer"
                 >
                   Evidence →
@@ -808,6 +874,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             PANEL A: SOURCE CODE & FILE SWITCHER
             =================================================================== */}
         <section
+          id="pg-panel-source"
           aria-label="Source Code Viewer"
           style={
             {
@@ -871,19 +938,23 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               <div className="px-3 py-1.5 bg-[var(--pg-bg-surface)] border-b border-[var(--pg-border-default)] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
                 {selectedFinding.location.isValidLocation && selectedFindingTargetFile ? (
                   <>
-                    <span className="text-[var(--pg-text-secondary)] truncate">
+                    <span
+                      className="text-[var(--pg-text-secondary)] break-words"
+                      title={`${selectedFinding.title} (${selectedFindingTargetFile.filename}:L${selectedFinding.location.startLine})`}
+                    >
                       Selected finding{' '}
                       <strong className="text-[var(--pg-text-primary)]">
                         {selectedFinding.title}
                       </strong>{' '}
                       is located in{' '}
-                      <span className="text-[var(--pg-accent-text)]">
+                      <span className="text-[var(--pg-accent-text)] break-all">
                         {selectedFindingTargetFile.filename}:L{selectedFinding.location.startLine}
                       </span>
                     </span>
                     <button
                       type="button"
                       onClick={() => handleNavigateToFindingSource(selectedFinding)}
+                      title={`Jump to ${selectedFindingTargetFile.filename}:L${selectedFinding.location.startLine}`}
                       className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-strong)] bg-[var(--pg-bg-elevated)] text-[var(--pg-accent-text)] hover:bg-[var(--pg-bg-interactive)] shrink-0 cursor-pointer"
                     >
                       <CornerDownRight className="w-3 h-3" />
@@ -961,6 +1032,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             PANEL B: PRIORITIZED FINDINGS & FILTER BAR
             =================================================================== */}
         <section
+          id="pg-panel-findings"
           aria-label="Prioritized Review Findings"
           style={
             {
@@ -1200,11 +1272,17 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
                       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <SeverityLabel severity={finding.severity} compact />
-                        <span className="font-mono text-[10.5px] text-[var(--pg-text-muted)] uppercase">
+                        <span
+                          className="font-mono text-[10.5px] text-[var(--pg-text-muted)] uppercase"
+                          title={`Category: ${finding.category}`}
+                        >
                           {finding.category}
                         </span>
                         {ruleId && (
-                          <span className="font-mono text-[10.5px] text-[var(--pg-text-secondary)]">
+                          <span
+                            className="font-mono text-[10.5px] text-[var(--pg-text-secondary)]"
+                            title={`Static Analyzer Rule: ${ruleId}`}
+                          >
                             [{ruleId}]
                           </span>
                         )}
@@ -1213,12 +1291,18 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     </div>
 
                     {/* Row 2: Finding Title */}
-                    <div className="text-[13px] font-semibold text-[var(--pg-text-primary)] leading-snug mb-1 break-words">
+                    <div
+                      className="text-[13px] font-semibold text-[var(--pg-text-primary)] leading-snug mb-1 break-words"
+                      title={finding.title}
+                    >
                       {finding.title}
                     </div>
 
                     {/* Row 3: Concise Technical Explanation Preview */}
-                    <p className="text-xs text-[var(--pg-text-secondary)] line-clamp-2 leading-relaxed mb-2.5">
+                    <p
+                      className="text-xs text-[var(--pg-text-secondary)] line-clamp-2 leading-relaxed mb-2.5"
+                      title={finding.explanation}
+                    >
                       {finding.explanation}
                     </p>
 
@@ -1231,7 +1315,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         >
                           <span aria-hidden="true">✓</span>
                           <span className="truncate">
-                            {shortFile}:L{finding.location.startLine}
+                            {finding.location.filename}:L{finding.location.startLine}
                             {finding.location.endLine !== finding.location.startLine
                               ? `–${finding.location.endLine}`
                               : ''}
@@ -1240,7 +1324,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                       ) : (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] text-[var(--pg-warning)] max-w-full truncate"
-                          title={finding.location.validationNote || 'Location Quarantined'}
+                          title={
+                            finding.location.validationNote ||
+                            `Quarantined location in ${finding.location.filename}`
+                          }
                         >
                           <span aria-hidden="true">△</span>
                           <span className="truncate">
@@ -1325,6 +1412,7 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
             PANEL C: EVIDENCE, REMEDIATION & TRIAGE ACTIONS
             =================================================================== */}
         <section
+          id="pg-panel-evidence"
           aria-label="Finding Evidence and Remediation Details"
           style={
             {
@@ -1412,10 +1500,10 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         type="button"
                         onClick={() => handleNavigateToFindingSource(selectedFinding)}
                         title={`Jump to ${selectedFindingTargetFile.filename}:L${selectedFinding.location.startLine}`}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] max-w-full truncate cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-accent-text)] hover:border-[var(--pg-border-strong)] max-w-full cursor-pointer text-left"
                       >
                         <CornerDownRight className="w-3 h-3 shrink-0" />
-                        <span className="truncate">
+                        <span className="break-all">
                           ✓ {selectedFindingTargetFile.filename}:L
                           {selectedFinding.location.startLine}
                           {selectedFinding.location.endLine !== selectedFinding.location.startLine
@@ -1424,7 +1512,13 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                         </span>
                       </button>
                     ) : (
-                      <span className="px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] text-[var(--pg-warning)] max-w-full truncate">
+                      <span
+                        className="px-1.5 py-0.5 bg-[var(--pg-warning-subtle)] text-[var(--pg-warning)] max-w-full break-all"
+                        title={
+                          selectedFinding.location.validationNote ||
+                          `Quarantined location in ${selectedFinding.location.filename}`
+                        }
+                      >
                         △ {selectedFinding.location.filename} · Quarantined (
                         {selectedFinding.location.locationReason || 'unverified'})
                       </span>
