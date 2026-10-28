@@ -43,7 +43,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   // Compute real activity metrics strictly from stored records
   const activityMetrics = useMemo(() => {
     const completedCount = reviews.filter(
-      (r) => r.status === 'completed' || r.status === 'completed_with_warnings'
+      (r) =>
+        r.status === 'completed' ||
+        r.status === 'completed_static_only' ||
+        r.status === 'completed_with_warnings'
     ).length;
 
     let unreviewedFindingsCount = 0;

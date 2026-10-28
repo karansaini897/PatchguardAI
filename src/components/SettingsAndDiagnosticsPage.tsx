@@ -36,9 +36,10 @@ const FAILURE_SIMULATION_MODES: Array<{
   description: string;
 }> = [
   {
-    category: 'MISSING_SERVER_CONFIG',
-    label: 'Missing Server Configuration (503)',
-    description: 'Verifies failure UX when AI-only mode is requested without server credentials.',
+    category: 'AI_SERVICE_UNAVAILABLE',
+    label: 'AI Service High Demand (503)',
+    description:
+      'Verifies HTTP 503 UNAVAILABLE handling after bounded exponential backoff retries are exhausted.',
   },
   {
     category: 'AI_RATE_LIMIT',
@@ -49,6 +50,11 @@ const FAILURE_SIMULATION_MODES: Array<{
     category: 'AI_TIMEOUT',
     label: 'AI Provider Timeout (504)',
     description: 'Verifies upstream deadline exceeded handling and static-analyzer fallback advice.',
+  },
+  {
+    category: 'MISSING_SERVER_CONFIG',
+    label: 'Missing Server Configuration (503)',
+    description: 'Verifies failure UX when AI-only mode is requested without server credentials.',
   },
   {
     category: 'INVALID_MODEL_RESPONSE',

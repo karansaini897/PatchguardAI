@@ -65,6 +65,7 @@ export interface ReviewFinding {
 
 export type ReviewExecutionStatus =
   | 'completed'
+  | 'completed_static_only'
   | 'completed_with_warnings'
   | 'failed'
   | 'cancelled'
@@ -77,6 +78,10 @@ export interface AnalysisStageReport {
   status: 'succeeded' | 'warning' | 'failed' | 'skipped';
   durationMs: number;
   findingsProduced: number;
+  attempts?: number;
+  retriedCount?: number;
+  httpStatus?: number;
+  retryable?: boolean;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -85,6 +90,8 @@ export type ApiErrorCategory =
   | 'BACKEND_UNAVAILABLE'
   | 'INVALID_REQUEST'
   | 'MISSING_SERVER_CONFIG'
+  | 'AI_SERVICE_UNAVAILABLE'
+  | 'AI_AUTH_ERROR'
   | 'AI_RATE_LIMIT'
   | 'AI_TIMEOUT'
   | 'INVALID_MODEL_RESPONSE'
@@ -99,6 +106,8 @@ export interface StructuredApiError {
   requestId: string;
   timestamp: string;
   retryable: boolean;
+  attemptsMade?: number;
+  httpStatus?: number;
 }
 
 export interface ReviewRecord {

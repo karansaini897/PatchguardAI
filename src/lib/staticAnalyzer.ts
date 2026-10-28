@@ -360,7 +360,7 @@ export function mergeAndCorroborateFindings(
       const overlaps =
         af.location.startLine <= sf.location.endLine + 3 &&
         af.location.endLine >= sf.location.startLine - 3;
-      return (overlaps || lineDiff <= 3) && (af.category === sf.category || lineDiff <= 1);
+      return (overlaps || lineDiff <= 3) && af.category === sf.category;
     });
 
     if (matchingAi) {

@@ -280,6 +280,13 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
               <span>{review.files.length} file(s)</span>
               <span aria-hidden="true">·</span>
               <span>{review.durationMs}ms</span>
+              <span aria-hidden="true">·</span>
+              <span
+                className="text-[11px] text-[var(--pg-text-muted)] truncate max-w-[260px]"
+                title={`Active Engine(s): ${review.modelUsed}`}
+              >
+                Engine: {review.modelUsed}
+              </span>
             </div>
 
             {/* Proportional Horizontal Severity Distribution Bar */}
@@ -411,9 +418,15 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
                     }
                   >
                     {stg.status.toUpperCase()}
+                    {stg.httpStatus ? ` (HTTP ${stg.httpStatus})` : ''}
                   </div>
                   <div className="text-[var(--pg-text-muted)]">
                     {stg.durationMs}ms · {stg.findingsProduced} finding(s)
+                    {typeof stg.attempts === 'number' && stg.attempts > 0
+                      ? ` · ${stg.attempts} attempt(s)${
+                          stg.retriedCount ? ` (${stg.retriedCount} retry)` : ''
+                        }`
+                      : ''}
                   </div>
                 </div>
               </div>
@@ -721,10 +734,26 @@ export const ReviewWorkspace: React.FC<ReviewWorkspaceProps> = ({
 
                     {/* Bottom line: File · Source · Status · Confidence */}
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--pg-text-muted)]">
-                      <span className="truncate max-w-[160px]" title={finding.location.filename}>
+                      <span className="truncate max-w-[140px]" title={finding.location.filename}>
                         {finding.location.filename}
                       </span>
                       <div className="flex items-center gap-1.5">
+                        <span
+                          className={
+                            finding.analysisSource === 'corroborated'
+                              ? 'text-[var(--pg-success)]'
+                              : finding.analysisSource === 'static-pattern'
+                              ? 'text-[var(--pg-info)]'
+                              : 'text-[var(--pg-text-secondary)]'
+                          }
+                        >
+                          {finding.analysisSource === 'corroborated'
+                            ? 'Static+AI'
+                            : finding.analysisSource === 'static-pattern'
+                            ? 'Static'
+                            : 'AI'}
+                        </span>
+                        <span aria-hidden="true">·</span>
                         <span>Conf:{finding.confidence.toUpperCase()}</span>
                         <span aria-hidden="true">·</span>
                         <FindingStatusLabel status={finding.status} />

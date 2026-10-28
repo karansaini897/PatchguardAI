@@ -137,12 +137,17 @@ export const ReviewStatusLabel: React.FC<{ status: ReviewExecutionStatus }> = ({
     { label: string; symbol: string; color: string }
   > = {
     completed: {
-      label: 'Completed',
+      label: 'Completed (AI Assisted)',
       symbol: '✓',
       color: 'text-[var(--pg-success)]',
     },
+    completed_static_only: {
+      label: 'Completed (Static Only)',
+      symbol: '✓',
+      color: 'text-[var(--pg-info)]',
+    },
     completed_with_warnings: {
-      label: 'Completed with Warnings',
+      label: 'Partially Completed (Warnings)',
       symbol: '△',
       color: 'text-[var(--pg-warning)]',
     },

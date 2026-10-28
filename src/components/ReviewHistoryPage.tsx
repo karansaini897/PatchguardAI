@@ -154,8 +154,9 @@ export const ReviewHistoryPage: React.FC<ReviewHistoryPageProps> = ({
             className="px-2.5 py-1.5 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-default)] text-[var(--pg-text-primary)]"
           >
             <option value="all">Status: All</option>
-            <option value="completed">Completed</option>
-            <option value="completed_with_warnings">Completed with Warnings</option>
+            <option value="completed">Completed (AI Assisted)</option>
+            <option value="completed_static_only">Completed (Static Only)</option>
+            <option value="completed_with_warnings">Partially Completed (Warnings)</option>
             <option value="failed">Failed</option>
           </select>
 
