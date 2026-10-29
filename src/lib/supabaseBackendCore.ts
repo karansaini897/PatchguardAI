@@ -58,6 +58,34 @@ export function isConfiguredSupabaseUrl(rawUrl: string | undefined | null): bool
 /**
  * Validates that a candidate Supabase publishable/anon key is configured and not a placeholder.
  */
+/**
+ * Safely decodes the payload of a standard 3-segment JWT without external dependencies
+ * to inspect non-sensitive role metadata (e.g., detecting if a `service_role` JWT was
+ * accidentally placed into an anon/publishable variable).
+ */
+export function extractJwtRoleClaim(rawToken: string | undefined | null): string | null {
+  if (!rawToken || typeof rawToken !== 'string') return null;
+  const parts = rawToken.trim().split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    let jsonStr = '';
+    if (typeof atob === 'function') {
+      jsonStr = atob(padded);
+    } else if (typeof Buffer !== 'undefined') {
+      jsonStr = Buffer.from(padded, 'base64').toString('utf8');
+    } else {
+      return null;
+    }
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    return typeof parsed.role === 'string' ? parsed.role : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isConfiguredSupabaseAnonKey(rawKey: string | undefined | null): boolean {
   if (!rawKey || typeof rawKey !== 'string') return false;
   const trimmed = rawKey.trim();
@@ -67,6 +95,13 @@ export function isConfiguredSupabaseAnonKey(rawKey: string | undefined | null): 
       trimmed
     )
   ) {
+    return false;
+  }
+  // Never accept a secret/service_role key as a public anon key
+  if (/^sb_secret_/i.test(trimmed)) {
+    return false;
+  }
+  if (extractJwtRoleClaim(trimmed) === 'service_role') {
     return false;
   }
   return true;
@@ -121,7 +156,7 @@ export function assertNoClientSideSecretLeakage(
       );
     }
 
-    if (/^sb_secret_/i.test(val)) {
+    if (/^sb_secret_/i.test(val) || extractJwtRoleClaim(val) === 'service_role') {
       violations.push(
         `Client variable "${key}" appears to contain a Supabase secret/service_role key.`
       );
@@ -132,6 +167,89 @@ export function assertNoClientSideSecretLeakage(
     safe: violations.length === 0,
     violations,
   };
+}
+
+/**
+ * Determines whether the isolated, development-only local authentication sandbox
+ * is permitted to run.
+ *
+ * Security Rules:
+ * 1. NEVER allowed when `NODE_ENV === 'production'`.
+ * 2. NEVER allowed when live Supabase Auth (`SUPABASE_URL` + `SUPABASE_ANON_KEY`) is configured.
+ * 3. NEVER allowed when `ALLOW_LOCAL_DEV_AUTH === 'false'`.
+ * 4. Allowed ONLY in non-production development/test environments before a live Supabase
+ *    project is configured.
+ */
+export function isLocalDevAuthAllowed(
+  envRecord: Record<string, string | undefined>
+): { allowed: boolean; reason: string } {
+  const nodeEnv = (envRecord.NODE_ENV || 'development').trim().toLowerCase();
+  if (nodeEnv === 'production') {
+    return {
+      allowed: false,
+      reason:
+        'Local development authentication fallback is strictly disabled in production (NODE_ENV=production). Configure SUPABASE_URL and SUPABASE_ANON_KEY to use Supabase Auth.',
+    };
+  }
+
+  const explicitToggle = (envRecord.ALLOW_LOCAL_DEV_AUTH || '').trim().toLowerCase();
+  if (explicitToggle === 'false' || explicitToggle === '0') {
+    return {
+      allowed: false,
+      reason:
+        'Local development authentication fallback is disabled via ALLOW_LOCAL_DEV_AUTH=false. Configure SUPABASE_URL and SUPABASE_ANON_KEY to use Supabase Auth.',
+    };
+  }
+
+  const supabaseUrl = envRecord.SUPABASE_URL || envRecord.VITE_SUPABASE_URL;
+  const supabaseAnonKey = envRecord.SUPABASE_ANON_KEY || envRecord.VITE_SUPABASE_ANON_KEY;
+  if (isConfiguredSupabaseUrl(supabaseUrl) && isConfiguredSupabaseAnonKey(supabaseAnonKey)) {
+    return {
+      allowed: false,
+      reason:
+        'Live Supabase Auth is configured; local development authentication fallback is disabled so all sessions are verified exclusively by Supabase Auth.',
+    };
+  }
+
+  return {
+    allowed: true,
+    reason:
+      'Isolated development-only authentication sandbox is active because NODE_ENV is not production and live SUPABASE_URL / SUPABASE_ANON_KEY are not yet configured.',
+  };
+}
+
+/**
+ * Validates that a production deployment (`NODE_ENV === 'production'`) does not attempt
+ * to enable the local-auth fallback and has real Supabase Auth configured.
+ */
+export function assertProductionAuthConfiguration(
+  envRecord: Record<string, string | undefined>
+): { valid: boolean; error?: string } {
+  const nodeEnv = (envRecord.NODE_ENV || 'development').trim().toLowerCase();
+  if (nodeEnv !== 'production') {
+    return { valid: true };
+  }
+
+  const explicitToggle = (envRecord.ALLOW_LOCAL_DEV_AUTH || '').trim().toLowerCase();
+  if (explicitToggle === 'true' || explicitToggle === '1') {
+    return {
+      valid: false,
+      error:
+        'FATAL SECURITY CONFIGURATION: ALLOW_LOCAL_DEV_AUTH cannot be enabled when NODE_ENV=production. Production deployments must use Supabase Auth.',
+    };
+  }
+
+  const supabaseUrl = envRecord.SUPABASE_URL || envRecord.VITE_SUPABASE_URL;
+  const supabaseAnonKey = envRecord.SUPABASE_ANON_KEY || envRecord.VITE_SUPABASE_ANON_KEY;
+  if (!isConfiguredSupabaseUrl(supabaseUrl) || !isConfiguredSupabaseAnonKey(supabaseAnonKey)) {
+    return {
+      valid: false,
+      error:
+        'Production authentication requires valid SUPABASE_URL and SUPABASE_ANON_KEY environment variables. The local development auth fallback is disabled in production.',
+    };
+  }
+
+  return { valid: true };
 }
 
 /**
@@ -924,6 +1042,12 @@ export class RlsEnforcedPostgresMirror {
     return this.projects.has(projectId);
   }
 
+  public reviewExistsIgnoreRls(clientOrDbReviewId: string): boolean {
+    return Array.from(this.reviews.values()).some(
+      (r) => r.client_review_id === clientOrDbReviewId || r.id === clientOrDbReviewId
+    );
+  }
+
   public createProject(
     authUid: string | null | undefined,
     input: {
@@ -1441,6 +1565,34 @@ export async function executeAuthenticatedReviewFlow(
   }
 
   const payload = validation.validatedPayload;
+
+  // 3b. Reject forged ownerId / owner_id fields in request body
+  if (rawPayload && typeof rawPayload === 'object') {
+    const rawObj = rawPayload as Record<string, unknown>;
+    const candidateOwnerId =
+      typeof rawObj.ownerId === 'string'
+        ? rawObj.ownerId.trim()
+        : typeof rawObj.owner_id === 'string'
+        ? rawObj.owner_id.trim()
+        : undefined;
+    if (candidateOwnerId && candidateOwnerId !== authenticatedUser.id) {
+      return {
+        ok: false,
+        httpStatus: 403,
+        requestId,
+        error: {
+          category: 'FORBIDDEN_PROJECT',
+          message: 'Access denied: cannot forge owner_id for another user account.',
+          technicalDetail: `Request payload attempted to set owner_id=${candidateOwnerId} for authenticated user ${authenticatedUser.id}.`,
+          remediationStep: 'Omit ownerId from the request body; ownership is derived strictly from your verified Bearer JWT.',
+          requestId,
+          timestamp: startedAtIso,
+          retryable: false,
+          httpStatus: 403,
+        },
+      };
+    }
+  }
 
   // 4. Confirm user owns or is authorized to access the target project before running or saving
   let targetProject: ProjectRecord | null = null;

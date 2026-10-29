@@ -23,10 +23,14 @@ enable_signup = true
 
 [functions.analyze-review]
 verify_jwt = true
+import_map = "./functions/import_map.json"
 
 [functions.review-code]
 verify_jwt = true
+import_map = "./functions/import_map.json"
 
 [functions.health]
 verify_jwt = false
+import_map = "./functions/import_map.json"
+
 

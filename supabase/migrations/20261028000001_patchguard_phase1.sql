@@ -43,7 +43,9 @@ create table if not exists public.projects (
   constraint projects_retention_mode_chk
     check (retention_mode in ('redacted_snippets_only', 'redacted_full_source')),
   constraint projects_owner_slug_unique
-    unique (owner_id, slug)
+    unique (owner_id, slug),
+  constraint projects_id_owner_unique
+    unique (id, owner_id)
 );
 
 create index if not exists idx_projects_owner_updated
@@ -102,7 +104,13 @@ create table if not exists public.reviews (
   constraint reviews_duration_non_negative_chk
     check (duration_ms >= 0),
   constraint reviews_owner_client_id_unique
-    unique (owner_id, client_review_id)
+    unique (owner_id, client_review_id),
+  constraint reviews_id_project_owner_unique
+    unique (id, project_id, owner_id),
+  constraint reviews_project_owner_fk
+    foreign key (project_id, owner_id)
+    references public.projects (id, owner_id)
+    on delete cascade
 );
 
 create index if not exists idx_reviews_owner_created
@@ -188,7 +196,11 @@ create table if not exists public.findings (
   constraint findings_line_bounds_chk
     check ((is_valid_location = false) or (start_line >= 1 and end_line >= start_line)),
   constraint findings_review_client_id_unique
-    unique (review_id, client_finding_id)
+    unique (review_id, client_finding_id),
+  constraint findings_review_project_owner_fk
+    foreign key (review_id, project_id, owner_id)
+    references public.reviews (id, project_id, owner_id)
+    on delete cascade
 );
 
 create index if not exists idx_findings_review_severity

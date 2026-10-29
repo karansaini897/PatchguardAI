@@ -32,7 +32,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Supabase Auth JWT (`access_token`) or local development session JWT (`pg_jwt_*`).
+      description: |
+        Supabase Auth JWT (`access_token`).
+        In non-production development mode (`NODE_ENV !== 'production'` when live Supabase is not yet configured), the server also accepts isolated local development sandbox tokens (`pg_dev_jwt_*`). Local sandbox tokens are strictly refused in production.
 
   parameters:
     RequestIdHeader:
@@ -220,17 +222,19 @@ components:
 paths:
   /api/health:
     get:
-      summary: Service & Engine Health Check (Implemented & Verified)
+      summary: Service & Engine Health Check (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: getHealth
       parameters:
         - $ref: '#/components/parameters/RequestIdHeader'
       responses:
         '200':
-          description: Service availability and configuration status.
+          description: Service availability, static analyzer version, AI readiness, and Supabase/auth mode status.
 
   /functions/v1/health:
     get:
-      summary: Supabase Edge Function Health Check (Implemented & Verified Locally)
+      summary: Supabase Edge Function Health Check (Implemented & Tested Locally; Awaiting Supabase Deployment)
+      x-implementation-status: implemented-and-tested
       operationId: getEdgeHealth
       responses:
         '200':
@@ -238,7 +242,8 @@ paths:
 
   /api/health/probe-ai:
     post:
-      summary: Live Gemini AI Provider Readiness Probe (Implemented & Verified)
+      summary: Live Gemini AI Provider Readiness Probe (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: probeAiConnectivity
       parameters:
         - $ref: '#/components/parameters/RequestIdHeader'
@@ -246,9 +251,73 @@ paths:
         '200':
           description: Safe probe result with latency and sanitized status message.
 
+  /api/auth/signup:
+    post:
+      summary: Isolated Development-Only Account Registration (Implemented & Tested; Refused in Production)
+      x-implementation-status: implemented-and-tested-dev-only
+      operationId: devAuthSignUp
+      responses:
+        '201':
+          description: Scrypt-hashed development sandbox account created (`NODE_ENV !== 'production'` only).
+        '400':
+          description: Invalid email or password shorter than 8 characters (`INVALID_REQUEST`).
+        '409':
+          description: Account already exists in local development sandbox (`INVALID_REQUEST`).
+        '503':
+          description: Refused because `NODE_ENV=production` or live Supabase Auth is configured (`MISSING_SERVER_CONFIG`).
+
+  /api/auth/signin:
+    post:
+      summary: Isolated Development-Only Account Sign-In (Implemented & Tested; Refused in Production)
+      x-implementation-status: implemented-and-tested-dev-only
+      operationId: devAuthSignIn
+      responses:
+        '200':
+          description: Verified credentials with constant-time `crypto.timingSafeEqual` (`NODE_ENV !== 'production'` only).
+        '401':
+          description: Invalid email or password (`AUTH_REQUIRED`).
+        '503':
+          description: Refused because `NODE_ENV=production` or live Supabase Auth is configured (`MISSING_SERVER_CONFIG`).
+
+  /api/auth/signout:
+    post:
+      summary: Revoke Active Development Session Token (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
+      operationId: devAuthSignOut
+      responses:
+        '200':
+          description: Session token revoked.
+
+  /api/auth/reset-password:
+    post:
+      summary: Development Sandbox Password Recovery Notice (Implemented & Tested; Refused in Production)
+      x-implementation-status: implemented-and-tested-dev-only
+      operationId: devAuthResetPassword
+      responses:
+        '200':
+          description: Sandbox recovery notice returned.
+        '400':
+          description: Invalid email (`INVALID_REQUEST`).
+        '503':
+          description: Refused because `NODE_ENV=production` or live Supabase Auth is configured (`MISSING_SERVER_CONFIG`).
+
+  /api/auth/session:
+    get:
+      summary: Verify Active Bearer Session Token & Restore Projects (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
+      operationId: getAuthSession
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Verified user profile and owned projects.
+        '401':
+          description: Missing, expired, or invalid Bearer token (`AUTH_REQUIRED`).
+
   /api/projects:
     get:
-      summary: List Authorized Projects for Authenticated User (Implemented & Verified)
+      summary: List Authorized Projects for Authenticated User (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: listProjects
       security:
         - bearerAuth: []
@@ -353,8 +422,11 @@ paths:
           description: Unauthorized (`AUTH_REQUIRED`).
         '403':
           description: RLS violation (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Project not found (`NOT_FOUND`).
     delete:
-      summary: Delete Authorized Project and Cascade Reviews/Findings (Implemented & Verified)
+      summary: Delete Authorized Project and Cascade Reviews/Findings (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: deleteProject
       security:
         - bearerAuth: []
@@ -368,6 +440,41 @@ paths:
       responses:
         '200':
           description: Project deleted and child reviews/findings cascaded.
+        '401':
+          description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: RLS violation (`FORBIDDEN_PROJECT`).
+        '404':
+          description: Project not found (`NOT_FOUND`).
+
+  /api/projects/{projectId}/retention:
+    patch:
+      summary: Update Project Source-Code Retention Policy (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
+      operationId: updateProjectRetention
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [retentionMode]
+              properties:
+                retentionMode:
+                  type: string
+                  enum: [redacted_snippets_only, redacted_full_source]
+      responses:
+        '200':
+          description: Updated project record.
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
         '403':
@@ -451,7 +558,8 @@ paths:
 
   /api/reviews:
     get:
-      summary: List Authorized Review History (Implemented & Verified)
+      summary: List Authorized Review History (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: listReviews
       security:
         - bearerAuth: []
@@ -467,10 +575,13 @@ paths:
           description: Ordered list of persisted reviews and findings owned by caller.
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Requested `projectId` belongs to another tenant (`FORBIDDEN_PROJECT`).
 
   /api/reviews/{reviewId}:
     get:
-      summary: Retrieve Single Authorized Review by ID (Implemented & Verified)
+      summary: Retrieve Single Authorized Review by ID (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: getReviewById
       security:
         - bearerAuth: []
@@ -485,10 +596,13 @@ paths:
           description: Persisted review record with findings.
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Review belongs to another tenant (`FORBIDDEN_PROJECT`).
         '404':
-          description: Review not found or owned by another user (`NOT_FOUND`).
+          description: Review not found (`NOT_FOUND`).
     delete:
-      summary: Delete Authorized Review and Cascade Findings (Implemented & Verified)
+      summary: Delete Authorized Review and Cascade Findings (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: deleteReview
       security:
         - bearerAuth: []
@@ -510,7 +624,8 @@ paths:
 
   /api/reviews/{reviewId}/status:
     get:
-      summary: Retrieve Review Lifecycle Status & Stage Progress (Implemented & Verified)
+      summary: Retrieve Review Lifecycle Status & Stage Progress (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: getReviewStatus
       security:
         - bearerAuth: []
@@ -525,12 +640,15 @@ paths:
           description: Current review status (`in_progress`, `completed`, `completed_static_only`, `completed_with_warnings`, `failed`), timestamps, and stages.
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Review belongs to another tenant (`FORBIDDEN_PROJECT`).
         '404':
           description: Review not found (`NOT_FOUND`).
 
   /api/reviews/{reviewId}/findings:
     get:
-      summary: Retrieve Validated & Quarantined Findings for a Review (Implemented & Verified)
+      summary: Retrieve Validated & Quarantined Findings for a Review (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: getReviewFindings
       security:
         - bearerAuth: []
@@ -545,12 +663,15 @@ paths:
           description: Findings array for the review.
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Review belongs to another tenant (`FORBIDDEN_PROJECT`).
         '404':
           description: Review not found (`NOT_FOUND`).
 
   /api/reviews/{reviewId}/retry:
     post:
-      summary: Safely Retry a Failed or Degraded Review (Implemented & Verified)
+      summary: Safely Retry a Failed or Degraded Review (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: retryReview
       security:
         - bearerAuth: []
@@ -567,12 +688,15 @@ paths:
           description: Review is already `completed` and does not qualify for retry (`INVALID_REQUEST`).
         '401':
           description: Unauthorized (`AUTH_REQUIRED`).
+        '403':
+          description: Review belongs to another tenant (`FORBIDDEN_PROJECT`).
         '404':
           description: Review not found (`NOT_FOUND`).
 
   /api/reviews/{reviewId}/findings/{findingId}:
     patch:
-      summary: Update Finding Triage Workflow Status (Implemented & Verified)
+      summary: Update Finding Triage Workflow Status (Implemented & Tested)
+      x-implementation-status: implemented-and-tested
       operationId: updateFindingStatus
       security:
         - bearerAuth: []

@@ -21,16 +21,23 @@ import {
   resolveServerPort,
 } from './src/lib/reviewOrchestrator.ts';
 import {
+  assertNoClientSideSecretLeakage,
+  assertProductionAuthConfiguration,
   executeAuthenticatedReviewFlow,
   extractBearerToken,
   InFlightReviewDeduplicator,
   isConfiguredSupabaseAnonKey,
   isConfiguredSupabaseUrl,
+  isLocalDevAuthAllowed,
   REVIEW_PAYLOAD_LIMITS,
   RlsEnforcedPostgresMirror,
   RlsPolicyViolationError,
   SlidingWindowRateLimiter,
 } from './src/lib/supabaseBackendCore.ts';
+import {
+  IsolatedLocalDevAuthStore,
+  LocalDevAuthForbiddenInProductionError,
+} from './src/lib/localAuthSecurity.ts';
 
 dotenv.config({ quiet: true });
 
@@ -39,34 +46,12 @@ const PORT = resolveServerPort(process.env.PORT, 3000);
 let lastAiConnectivityState: 'unverified' | 'verified' | 'failed' = 'unverified';
 let lastAiConnectivityMessage = '';
 
-// Local RLS-enforced relational database & account directory (active when live Supabase env vars are unset)
+// Local RLS-enforced relational database & isolated dev-only account store
+// (Active ONLY when NODE_ENV !== 'production' and live Supabase env vars are unset)
 const serverRlsDatabase = new RlsEnforcedPostgresMirror();
+const localDevAuthStore = new IsolatedLocalDevAuthStore(() => process.env);
 const reviewRateLimiter = new SlidingWindowRateLimiter(30, 60_000);
 const reviewDeduplicator = new InFlightReviewDeduplicator(45_000);
-
-interface LocalUserAccount {
-  id: string;
-  email: string;
-  passwordHash: string;
-  createdAt: string;
-}
-
-interface LocalSessionRecord {
-  accessToken: string;
-  userId: string;
-  email: string;
-  expiresAt: number;
-}
-
-const localAccountsByEmail = new Map<string, LocalUserAccount>();
-const localSessionsByToken = new Map<string, LocalSessionRecord>();
-
-function hashPassword(password: string, email: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(`patchguard-salt:${email.toLowerCase().trim()}:${password}`)
-    .digest('hex');
-}
 
 function getOrGenerateRequestId(req: express.Request, prefix = 'req'): string {
   const fromHeader = req.headers['x-request-id'];
@@ -104,44 +89,6 @@ function sendStructuredError(
   });
 }
 
-// Seed a default verified developer account for immediate local testing while supporting full sign-up of new accounts
-function ensureDefaultLocalAccount(): LocalUserAccount {
-  const defaultEmail = 'engineer@patchguard.dev';
-  const existing = localAccountsByEmail.get(defaultEmail);
-  if (existing) return existing;
-
-  const account: LocalUserAccount = {
-    id: '11111111-2222-4333-8444-555555555555',
-    email: defaultEmail,
-    passwordHash: hashPassword('PatchGuard!2026', defaultEmail),
-    createdAt: new Date().toISOString(),
-  };
-  localAccountsByEmail.set(defaultEmail, account);
-  serverRlsDatabase.ensureDefaultProject(account.id);
-  return account;
-}
-
-ensureDefaultLocalAccount();
-
-function issueLocalSession(account: LocalUserAccount, ttlSeconds = 3600): AuthenticatedUser {
-  const token = `pg_jwt_${account.id}_${crypto.randomBytes(16).toString('hex')}`;
-  const expiresAt = Date.now() + ttlSeconds * 1000;
-  localSessionsByToken.set(token, {
-    accessToken: token,
-    userId: account.id,
-    email: account.email,
-    expiresAt,
-  });
-  serverRlsDatabase.ensureDefaultProject(account.id);
-  return {
-    id: account.id,
-    email: account.email,
-    accessToken: token,
-    expiresAt,
-    authProvider: 'local-session-jwt',
-  };
-}
-
 function isSupabaseServerConfigured(): boolean {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
@@ -152,13 +99,17 @@ async function verifyRequestAccessToken(
   accessToken: string
 ): Promise<AuthenticatedUser | null> {
   if (!accessToken || typeof accessToken !== 'string') return null;
+  const trimmedToken = accessToken.trim();
+  if (!trimmedToken) return null;
 
-  // 1. Check if token is a live Supabase JWT when Supabase is configured
+  // 1. Verify against live Supabase Auth when configured
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  const isLocalTokenPrefix =
+    trimmedToken.startsWith('pg_dev_jwt_') || trimmedToken.startsWith('pg_jwt_');
 
   if (
-    !accessToken.startsWith('pg_jwt_') &&
+    !isLocalTokenPrefix &&
     isConfiguredSupabaseUrl(supabaseUrl) &&
     isConfiguredSupabaseAnonKey(supabaseAnonKey)
   ) {
@@ -169,29 +120,31 @@ async function verifyRequestAccessToken(
       const {
         data: { user },
         error,
-      } = await supabase.auth.getUser(accessToken);
+      } = await supabase.auth.getUser(trimmedToken);
       if (!error && user) {
         serverRlsDatabase.ensureDefaultProject(user.id);
         return {
           id: user.id,
           email: user.email || 'authenticated@supabase.user',
-          accessToken,
+          accessToken: trimmedToken,
           authProvider: 'supabase-jwt',
         };
       }
     } catch {
-      // Fall through
+      return null;
     }
-  }
-
-  // 2. Verify local session JWT
-  const session = localSessionsByToken.get(accessToken);
-  if (!session) return null;
-
-  if (Date.now() > session.expiresAt) {
-    localSessionsByToken.delete(accessToken);
     return null;
   }
+
+  // 2. Verify isolated development-only session token ONLY when local dev auth is allowed
+  // (Strictly refused when NODE_ENV === 'production' or when live Supabase Auth is configured)
+  const devAuthCheck = isLocalDevAuthAllowed(process.env);
+  if (!devAuthCheck.allowed) {
+    return null;
+  }
+
+  const session = localDevAuthStore.verifySessionToken(trimmedToken);
+  if (!session) return null;
 
   return {
     id: session.userId,
@@ -288,7 +241,67 @@ async function invokeGeminiReviewModel(
 }
 
 async function startServer() {
+  // 1. Startup secret-leakage & production authentication safety verification
+  const secretLeakCheck = assertNoClientSideSecretLeakage(
+    process.env as Record<string, string | undefined>
+  );
+  if (!secretLeakCheck.safe) {
+    console.error(
+      '[PatchGuard Security Audit] Refusing to start due to client-side secret exposure in VITE_* environment variables:',
+      secretLeakCheck.violations
+    );
+    process.exit(1);
+  }
+
+  const prodAuthCheck = assertProductionAuthConfiguration(
+    process.env as Record<string, string | undefined>
+  );
+  if (
+    !prodAuthCheck.valid &&
+    (process.env.ALLOW_LOCAL_DEV_AUTH || '').trim().toLowerCase() === 'true'
+  ) {
+    console.error(`[PatchGuard Security Audit] ${prodAuthCheck.error}`);
+    process.exit(1);
+  }
+
   const app = express();
+
+  // 2. Explicit origin-checked CORS policy (never combines wildcard '*' with credentials)
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter((o) => o.length > 0 && o !== 'MY_APP_URL');
+
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id, Retry-After');
+
+    if (origin) {
+      const isLocalhostDev =
+        process.env.NODE_ENV !== 'production' &&
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+      const isExplicitlyAllowed = configuredOrigins.includes(origin);
+
+      if (isExplicitlyAllowed || isLocalhostDev) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'Authorization, Content-Type, X-Request-Id, apikey, x-client-info'
+        );
+        res.setHeader(
+          'Access-Control-Allow-Methods',
+          'GET, POST, PATCH, DELETE, OPTIONS'
+        );
+      }
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   // Enforce strict request size limit matching REVIEW_PAYLOAD_LIMITS.MAX_BODY_BYTES (256 KB)
   app.use(
@@ -342,6 +355,7 @@ async function startServer() {
     const requestId = getOrGenerateRequestId(req, 'health');
     const aiConfigured = isConfiguredGeminiApiKey(process.env.GEMINI_API_KEY);
     const supabaseLive = isSupabaseServerConfigured();
+    const devAuth = isLocalDevAuthAllowed(process.env as Record<string, string | undefined>);
     res.setHeader('X-Request-Id', requestId);
     res.json({
       status: 'ok',
@@ -358,7 +372,12 @@ async function startServer() {
       staticEngineAvailable: true,
       staticEngineVersion: STATIC_ANALYZER_VERSION,
       supabaseConfigured: supabaseLive,
-      supabaseMode: supabaseLive ? 'live-supabase' : 'local-rls-mirror',
+      supabaseMode: supabaseLive
+        ? 'live-supabase'
+        : devAuth.allowed
+        ? 'local-rls-mirror'
+        : 'unconfigured-production',
+      localDevAuthAllowed: devAuth.allowed,
     });
   };
 
@@ -428,79 +447,168 @@ async function startServer() {
   });
 
   // ==========================================================================
-  // Local Auth Endpoints (Used when live VITE_SUPABASE_URL is not configured)
+  // Isolated Development-Only Local Auth Endpoints
+  // Strictly disabled in production (NODE_ENV=production) and whenever live
+  // Supabase Auth is configured. Uses per-user random-salted scrypt + timingSafeEqual.
   // ==========================================================================
   app.post('/api/auth/signup', (req, res) => {
     const requestId = getOrGenerateRequestId(req, 'auth');
     res.setHeader('X-Request-Id', requestId);
+
+    const devAuthCheck = isLocalDevAuthAllowed(
+      process.env as Record<string, string | undefined>
+    );
+    if (!devAuthCheck.allowed) {
+      sendStructuredError(
+        res,
+        503,
+        'MISSING_SERVER_CONFIG',
+        devAuthCheck.reason,
+        'Local development authentication fallback is disabled in this environment.',
+        'Authenticate directly via Supabase Auth using VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+        requestId
+      );
+      return;
+    }
+
     const email = String(req.body?.email || '')
       .trim()
       .toLowerCase();
     const password = String(req.body?.password || '');
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      res.status(400).json({
-        requestId,
-        error: 'Enter a valid email address (e.g., engineer@company.com).',
-      });
+      sendStructuredError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'Enter a valid email address (e.g., engineer@company.com).',
+        'Invalid email format on POST /api/auth/signup.',
+        'Provide a valid email address.',
+        requestId
+      );
       return;
     }
     if (password.length < 8) {
-      res.status(400).json({
-        requestId,
-        error: 'Password must be at least 8 characters long.',
-      });
-      return;
-    }
-    if (localAccountsByEmail.has(email)) {
-      res.status(409).json({
-        requestId,
-        error: 'An account with this email already exists. Please sign in.',
-      });
+      sendStructuredError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'Password must be at least 8 characters long.',
+        'Password shorter than minimum 8-character policy.',
+        'Choose a password with at least 8 characters.',
+        requestId
+      );
       return;
     }
 
-    const account: LocalUserAccount = {
-      id: crypto.randomUUID(),
-      email,
-      passwordHash: hashPassword(password, email),
-      createdAt: new Date().toISOString(),
-    };
-    localAccountsByEmail.set(email, account);
-    const session = issueLocalSession(account);
-    const projects = serverRlsDatabase.listProjects(account.id);
-
-    res.status(201).json({
-      requestId,
-      user: session,
-      projects,
-    });
+    try {
+      const { account, session } = localDevAuthStore.registerAccount(email, password);
+      serverRlsDatabase.ensureDefaultProject(account.id);
+      const projects = serverRlsDatabase.listProjects(account.id);
+      const user: AuthenticatedUser = {
+        id: account.id,
+        email: account.email,
+        accessToken: session.accessToken,
+        expiresAt: session.expiresAt,
+        authProvider: 'local-session-jwt',
+      };
+      res.status(201).json({
+        requestId,
+        user,
+        projects,
+      });
+    } catch (err: any) {
+      if (err instanceof LocalDevAuthForbiddenInProductionError) {
+        sendStructuredError(
+          res,
+          503,
+          'MISSING_SERVER_CONFIG',
+          err.message,
+          'Local dev auth refused in production.',
+          'Configure Supabase Auth.',
+          requestId
+        );
+        return;
+      }
+      const status = err?.status === 409 ? 409 : 400;
+      sendStructuredError(
+        res,
+        status,
+        'INVALID_REQUEST',
+        err?.message || 'Unable to register local development account.',
+        'Account registration check failed.',
+        'Sign in with your existing password or use a different email address.',
+        requestId
+      );
+    }
   });
 
   app.post('/api/auth/signin', (req, res) => {
     const requestId = getOrGenerateRequestId(req, 'auth');
     res.setHeader('X-Request-Id', requestId);
+
+    const devAuthCheck = isLocalDevAuthAllowed(
+      process.env as Record<string, string | undefined>
+    );
+    if (!devAuthCheck.allowed) {
+      sendStructuredError(
+        res,
+        503,
+        'MISSING_SERVER_CONFIG',
+        devAuthCheck.reason,
+        'Local development authentication fallback is disabled in this environment.',
+        'Authenticate directly via Supabase Auth using VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+        requestId
+      );
+      return;
+    }
+
     const email = String(req.body?.email || '')
       .trim()
       .toLowerCase();
     const password = String(req.body?.password || '');
 
-    const account = localAccountsByEmail.get(email);
-    if (!account || account.passwordHash !== hashPassword(password, email)) {
-      res.status(401).json({
-        requestId,
-        error: 'Invalid email or password.',
-      });
-      return;
-    }
+    try {
+      const authResult = localDevAuthStore.authenticateSignIn(email, password);
+      if (!authResult) {
+        sendStructuredError(
+          res,
+          401,
+          'AUTH_REQUIRED',
+          'Invalid email or password.',
+          'Scrypt credential verification failed or account does not exist in the local development sandbox.',
+          'Verify your email and password, or select Create Account to register a local development account.',
+          requestId
+        );
+        return;
+      }
 
-    const session = issueLocalSession(account);
-    const projects = serverRlsDatabase.listProjects(account.id);
-    res.json({
-      requestId,
-      user: session,
-      projects,
-    });
+      const { account, session } = authResult;
+      serverRlsDatabase.ensureDefaultProject(account.id);
+      const projects = serverRlsDatabase.listProjects(account.id);
+      const user: AuthenticatedUser = {
+        id: account.id,
+        email: account.email,
+        accessToken: session.accessToken,
+        expiresAt: session.expiresAt,
+        authProvider: 'local-session-jwt',
+      };
+      res.json({
+        requestId,
+        user,
+        projects,
+      });
+    } catch (err: any) {
+      sendStructuredError(
+        res,
+        503,
+        'MISSING_SERVER_CONFIG',
+        err?.message || 'Local development authentication is disabled.',
+        'Local dev auth refused.',
+        'Configure Supabase Auth.',
+        requestId
+      );
+    }
   });
 
   app.post('/api/auth/signout', (req, res) => {
@@ -508,7 +616,7 @@ async function startServer() {
     res.setHeader('X-Request-Id', requestId);
     const token = extractBearerToken(req.headers.authorization);
     if (token) {
-      localSessionsByToken.delete(token);
+      localDevAuthStore.revokeSessionToken(token);
     }
     res.json({ ok: true, requestId });
   });
@@ -516,6 +624,23 @@ async function startServer() {
   app.post('/api/auth/reset-password', (req, res) => {
     const requestId = getOrGenerateRequestId(req, 'auth');
     res.setHeader('X-Request-Id', requestId);
+
+    const devAuthCheck = isLocalDevAuthAllowed(
+      process.env as Record<string, string | undefined>
+    );
+    if (!devAuthCheck.allowed) {
+      sendStructuredError(
+        res,
+        503,
+        'MISSING_SERVER_CONFIG',
+        devAuthCheck.reason,
+        'Local password reset fallback is disabled in this environment.',
+        'Use Supabase Auth resetPasswordForEmail with your configured Supabase project.',
+        requestId
+      );
+      return;
+    }
+
     const email = String(req.body?.email || '')
       .trim()
       .toLowerCase();
@@ -534,7 +659,7 @@ async function startServer() {
     res.json({
       ok: true,
       requestId,
-      message: `Password recovery request recorded for ${email}. Connect live Supabase Auth in .env.local to send SMTP recovery links.`,
+      message: `Development sandbox notice for ${email}: Local in-memory accounts do not send outbound emails. Connect your live Supabase project in .env.local to send real password recovery links via Supabase Auth.`,
     });
   });
 
@@ -543,14 +668,28 @@ async function startServer() {
     res.setHeader('X-Request-Id', requestId);
     const token = extractBearerToken(req.headers.authorization);
     if (!token) {
-      res.status(401).json({ requestId, error: 'No active session token.' });
+      sendStructuredError(
+        res,
+        401,
+        'AUTH_REQUIRED',
+        'No active session token.',
+        'Missing Authorization: Bearer header on GET /api/auth/session.',
+        'Sign in with a valid account session.',
+        requestId
+      );
       return;
     }
     const user = await verifyRequestAccessToken(token);
     if (!user) {
-      res
-        .status(401)
-        .json({ requestId, error: 'Session expired or invalid. Please sign in again.' });
+      sendStructuredError(
+        res,
+        401,
+        'AUTH_REQUIRED',
+        'Session expired or invalid. Please sign in again.',
+        'Access token verification failed or local dev auth is disabled.',
+        'Sign in again to obtain a valid session token.',
+        requestId
+      );
       return;
     }
     const projects = serverRlsDatabase.listProjects(user.id);
@@ -635,8 +774,14 @@ async function startServer() {
       return;
     }
     try {
+      const candidateOwnerId =
+        req.body?.ownerId !== undefined
+          ? String(req.body.ownerId)
+          : req.body?.owner_id !== undefined
+          ? String(req.body.owner_id)
+          : undefined;
       const project = serverRlsDatabase.createProject(user.id, {
-        ownerId: req.body?.ownerId,
+        ownerId: candidateOwnerId,
         name: String(req.body?.name || '').trim(),
         repository: String(req.body?.repository || '').trim(),
         defaultBranch: String(req.body?.defaultBranch || 'main').trim(),
@@ -677,6 +822,21 @@ async function startServer() {
       );
       return;
     }
+    if (
+      !serverRlsDatabase.getProjectById(user.id, req.params.projectId) &&
+      !serverRlsDatabase.projectExistsIgnoreRls(req.params.projectId)
+    ) {
+      sendStructuredError(
+        res,
+        404,
+        'NOT_FOUND',
+        'Project not found.',
+        `Project ${req.params.projectId} does not exist.`,
+        'Verify the project ID and try again.',
+        requestId
+      );
+      return;
+    }
     try {
       const retentionMode: SourceRetentionMode | undefined =
         req.body?.retentionMode !== undefined
@@ -684,8 +844,14 @@ async function startServer() {
             ? 'redacted_full_source'
             : 'redacted_snippets_only'
           : undefined;
+      const candidateOwnerId =
+        req.body?.ownerId !== undefined
+          ? String(req.body.ownerId)
+          : req.body?.owner_id !== undefined
+          ? String(req.body.owner_id)
+          : undefined;
       const project = serverRlsDatabase.updateProject(user.id, req.params.projectId, {
-        ownerId: req.body?.ownerId,
+        ownerId: candidateOwnerId,
         name: req.body?.name !== undefined ? String(req.body.name) : undefined,
         repository:
           req.body?.repository !== undefined ? String(req.body.repository) : undefined,
@@ -782,6 +948,22 @@ async function startServer() {
       typeof req.query.projectId === 'string' && req.query.projectId.trim()
         ? req.query.projectId.trim()
         : undefined;
+    if (
+      projectId &&
+      !serverRlsDatabase.getProjectById(user.id, projectId) &&
+      serverRlsDatabase.projectExistsIgnoreRls(projectId)
+    ) {
+      sendStructuredError(
+        res,
+        403,
+        'FORBIDDEN_PROJECT',
+        'Access denied: you do not have permission to list reviews for another user project.',
+        `RLS ownership check rejected projectId=${projectId} for user ${user.id}.`,
+        'Filter by a project owned by your authenticated account.',
+        requestId
+      );
+      return;
+    }
     const reviews = serverRlsDatabase.listReviews(user.id, projectId);
     res.setHeader('X-Request-Id', requestId);
     res.json({ requestId, reviews });
@@ -805,11 +987,12 @@ async function startServer() {
     }
     const review = serverRlsDatabase.getReviewById(user.id, req.params.reviewId);
     if (!review) {
+      const ownedByOther = serverRlsDatabase.reviewExistsIgnoreRls(req.params.reviewId);
       sendStructuredError(
         res,
-        404,
-        'NOT_FOUND',
-        'Review not found or access denied.',
+        ownedByOther ? 403 : 404,
+        ownedByOther ? 'FORBIDDEN_PROJECT' : 'NOT_FOUND',
+        ownedByOther ? 'Access denied: you do not own this review.' : 'Review not found.',
         `No review ${req.params.reviewId} visible to user ${user.id} under RLS.`,
         'Verify the review ID belongs to your account.',
         requestId
@@ -838,11 +1021,12 @@ async function startServer() {
     }
     const review = serverRlsDatabase.getReviewById(user.id, req.params.reviewId);
     if (!review) {
+      const ownedByOther = serverRlsDatabase.reviewExistsIgnoreRls(req.params.reviewId);
       sendStructuredError(
         res,
-        404,
-        'NOT_FOUND',
-        'Review not found or access denied.',
+        ownedByOther ? 403 : 404,
+        ownedByOther ? 'FORBIDDEN_PROJECT' : 'NOT_FOUND',
+        ownedByOther ? 'Access denied: you do not own this review.' : 'Review not found.',
         `No review ${req.params.reviewId} visible to user ${user.id} under RLS.`,
         'Verify the review ID belongs to your account.',
         requestId
@@ -882,11 +1066,12 @@ async function startServer() {
     }
     const findings = serverRlsDatabase.getFindingsByReviewId(user.id, req.params.reviewId);
     if (!findings) {
+      const ownedByOther = serverRlsDatabase.reviewExistsIgnoreRls(req.params.reviewId);
       sendStructuredError(
         res,
-        404,
-        'NOT_FOUND',
-        'Review not found or access denied.',
+        ownedByOther ? 403 : 404,
+        ownedByOther ? 'FORBIDDEN_PROJECT' : 'NOT_FOUND',
+        ownedByOther ? 'Access denied: you do not own this review.' : 'Review not found.',
         `No findings found for review ${req.params.reviewId} under user ${user.id}.`,
         'Verify the review ID belongs to your account.',
         requestId
@@ -916,11 +1101,12 @@ async function startServer() {
 
     const existing = serverRlsDatabase.getReviewById(user.id, req.params.reviewId);
     if (!existing) {
+      const ownedByOther = serverRlsDatabase.reviewExistsIgnoreRls(req.params.reviewId);
       sendStructuredError(
         res,
-        404,
-        'NOT_FOUND',
-        'Review not found or access denied.',
+        ownedByOther ? 403 : 404,
+        ownedByOther ? 'FORBIDDEN_PROJECT' : 'NOT_FOUND',
+        ownedByOther ? 'Access denied: you do not own this review.' : 'Review not found.',
         `Review ${req.params.reviewId} is not accessible to user ${user.id}.`,
         'Select an existing review owned by your account.',
         requestId

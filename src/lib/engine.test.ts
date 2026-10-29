@@ -32,12 +32,15 @@ import {
 import {
   applySourceRetentionPolicy,
   assertNoClientSideSecretLeakage,
+  assertProductionAuthConfiguration,
   executeAuthenticatedReviewFlow,
   extractBearerToken,
+  extractJwtRoleClaim,
   InFlightReviewDeduplicator,
   isConfiguredSupabaseAnonKey,
   isConfiguredSupabaseServiceRoleKey,
   isConfiguredSupabaseUrl,
+  isLocalDevAuthAllowed,
   redactSecretsInSource,
   REVIEW_PAYLOAD_LIMITS,
   RlsEnforcedPostgresMirror,
@@ -45,6 +48,14 @@ import {
   SlidingWindowRateLimiter,
   validateReviewRequestWithLimits,
 } from './supabaseBackendCore.ts';
+import {
+  hashPasswordScrypt,
+  IsolatedLocalDevAuthStore,
+  LocalDevAuthForbiddenInProductionError,
+  verifyPasswordScrypt,
+} from './localAuthSecurity.ts';
+import { handleAnalyzeReviewEdgeRequest } from '../../supabase/functions/analyze-review/index.ts';
+import { handleHealthEdgeRequest } from '../../supabase/functions/health/index.ts';
 import { INITIAL_EVALUATION_TEST_CASES, ISOLATED_DEMO_REVIEW } from './curatedData.ts';
 import type {
   AuthenticatedUser,
@@ -2063,6 +2074,254 @@ test('21. Master Backend Engineering Suite: Project CRUD + cascade delete, truth
   assert.ok(setupDoc.includes('## Step 1: Create Your Supabase Project'));
   assert.ok(setupDoc.includes('## Step 13: Deploying Frontend & Backend to Production'));
 });
+
+test('22. Phase 1.1 Security Audit: scrypt hashing, zero hardcoded credentials, production local-auth refusal, JWT service_role detection, forged owner_id rejection, SQL composite FKs, and Edge Function runtime checks', async () => {
+  const rootDir = process.cwd();
+
+  // 22a. Verify hardcoded default credentials and SHA-256 password hashing are completely removed from server.ts, AuthGateModal.tsx, and App.tsx
+  const serverSource = fs.readFileSync(path.join(rootDir, 'server.ts'), 'utf8');
+  const authModalSource = fs.readFileSync(
+    path.join(rootDir, 'src/components/AuthGateModal.tsx'),
+    'utf8'
+  );
+  const appSource = fs.readFileSync(path.join(rootDir, 'src/App.tsx'), 'utf8');
+
+  assert.equal(
+    serverSource.includes('PatchGuard!2026'),
+    false,
+    'server.ts must not contain hardcoded default password'
+  );
+  assert.equal(
+    serverSource.includes('ensureDefaultLocalAccount'),
+    false,
+    'server.ts must not seed a hardcoded default account'
+  );
+  assert.equal(
+    serverSource.includes("createHash('sha256')"),
+    false,
+    'server.ts must not use fast SHA-256 for password hashing'
+  );
+  assert.equal(
+    authModalSource.includes('PatchGuard!2026'),
+    false,
+    'AuthGateModal.tsx must not pre-fill or expose hardcoded passwords'
+  );
+  assert.equal(
+    appSource.includes('PatchGuard!2026'),
+    false,
+    'App.tsx must not auto-login with hardcoded credentials'
+  );
+
+  // 22b. Verify scrypt password hashing uses unique per-account random salts and constant-time verification
+  const hash1 = hashPasswordScrypt('StrongEngineerPass!2026');
+  const hash2 = hashPasswordScrypt('StrongEngineerPass!2026');
+  assert.ok(hash1.startsWith('scrypt$'));
+  assert.ok(hash2.startsWith('scrypt$'));
+  assert.notEqual(
+    hash1,
+    hash2,
+    'Identical passwords must produce distinct scrypt records due to random 16-byte salts'
+  );
+  assert.equal(verifyPasswordScrypt('StrongEngineerPass!2026', hash1), true);
+  assert.equal(verifyPasswordScrypt('StrongEngineerPass!2026', hash2), true);
+  assert.equal(verifyPasswordScrypt('WrongEngineerPass!2026', hash1), false);
+  assert.equal(verifyPasswordScrypt('StrongEngineerPass!2026', 'sha256$invalid$record'), false);
+
+  // 22c. Verify local development auth store is strictly isolated and refuses to run in production or when live Supabase is configured
+  assert.equal(isLocalDevAuthAllowed({ NODE_ENV: 'development' }).allowed, true);
+  assert.equal(isLocalDevAuthAllowed({ NODE_ENV: 'production' }).allowed, false);
+  assert.equal(
+    isLocalDevAuthAllowed({ NODE_ENV: 'development', ALLOW_LOCAL_DEV_AUTH: 'false' }).allowed,
+    false
+  );
+  assert.equal(
+    isLocalDevAuthAllowed({
+      NODE_ENV: 'development',
+      SUPABASE_URL: 'https://realproj.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_realAnonKey1234567890abcdef',
+    }).allowed,
+    false,
+    'Local dev auth fallback must be disabled automatically once live Supabase Auth is configured'
+  );
+
+  // Production configuration guard
+  assert.equal(
+    assertProductionAuthConfiguration({
+      NODE_ENV: 'production',
+      ALLOW_LOCAL_DEV_AUTH: 'true',
+      SUPABASE_URL: 'https://realproj.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_realAnonKey1234567890abcdef',
+    }).valid,
+    false,
+    'Production guard must reject ALLOW_LOCAL_DEV_AUTH=true when NODE_ENV=production'
+  );
+  assert.equal(
+    assertProductionAuthConfiguration({
+      NODE_ENV: 'production',
+    }).valid,
+    false,
+    'Production guard must require valid SUPABASE_URL and SUPABASE_ANON_KEY in production'
+  );
+  assert.equal(
+    assertProductionAuthConfiguration({
+      NODE_ENV: 'production',
+      SUPABASE_URL: 'https://realproj.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_realAnonKey1234567890abcdef',
+    }).valid,
+    true
+  );
+
+  // Verify IsolatedLocalDevAuthStore starts with 0 accounts and throws LocalDevAuthForbiddenInProductionError in production
+  let simulatedEnv: Record<string, string | undefined> = { NODE_ENV: 'development' };
+  const devStore = new IsolatedLocalDevAuthStore(() => simulatedEnv);
+  assert.equal(devStore.getAccountCount(), 0, 'Dev auth store must start with 0 pre-seeded accounts');
+
+  const reg = devStore.registerAccount('dev.auditor@example.com', 'AuditorSecret!99');
+  assert.equal(devStore.getAccountCount(), 1);
+  assert.ok(reg.session.accessToken.startsWith('pg_dev_jwt_'));
+  assert.ok(devStore.verifySessionToken(reg.session.accessToken));
+
+  // Duplicate sign-up must fail with 409 status
+  assert.throws(
+    () => devStore.registerAccount('dev.auditor@example.com', 'AnotherPassword!99'),
+    (err: any) => err?.status === 409
+  );
+
+  // Switch environment to production -> all local auth operations and token verifications are refused
+  simulatedEnv = { NODE_ENV: 'production' };
+  assert.equal(
+    devStore.verifySessionToken(reg.session.accessToken),
+    null,
+    'Local dev session tokens must be rejected when NODE_ENV=production'
+  );
+  assert.throws(
+    () => devStore.authenticateSignIn('dev.auditor@example.com', 'AuditorSecret!99'),
+    (err: unknown) => err instanceof LocalDevAuthForbiddenInProductionError
+  );
+  assert.throws(
+    () => devStore.registerAccount('new.prod@example.com', 'ProdSecret!99'),
+    (err: unknown) => err instanceof LocalDevAuthForbiddenInProductionError
+  );
+
+  // 22d. Verify JWT role claim inspection blocks legacy JWT service_role keys in VITE_ variables
+  const fakeHeader = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString(
+    'base64url'
+  );
+  const serviceRolePayload = Buffer.from(
+    JSON.stringify({ role: 'service_role', iss: 'supabase' })
+  ).toString('base64url');
+  const anonRolePayload = Buffer.from(
+    JSON.stringify({ role: 'anon', iss: 'supabase' })
+  ).toString('base64url');
+  const serviceRoleJwt = `${fakeHeader}.${serviceRolePayload}.fakesig`;
+  const anonRoleJwt = `${fakeHeader}.${anonRolePayload}.fakesig`;
+
+  assert.equal(extractJwtRoleClaim(serviceRoleJwt), 'service_role');
+  assert.equal(extractJwtRoleClaim(anonRoleJwt), 'anon');
+  assert.equal(
+    isConfiguredSupabaseAnonKey(serviceRoleJwt),
+    false,
+    'isConfiguredSupabaseAnonKey must reject a JWT with role=service_role'
+  );
+  assert.equal(isConfiguredSupabaseAnonKey(anonRoleJwt), true);
+
+  const jwtLeakCheck = assertNoClientSideSecretLeakage({
+    VITE_SUPABASE_ANON_KEY: serviceRoleJwt,
+  });
+  assert.equal(jwtLeakCheck.safe, false);
+  assert.equal(jwtLeakCheck.violations.length, 1);
+
+  // 22e. Verify forged ownerId / owner_id in POST /api/review payload is rejected with 403 FORBIDDEN_PROJECT
+  const db = new RlsEnforcedPostgresMirror();
+  const alice: AuthenticatedUser = {
+    id: '1111aaaa-1111-4111-8111-111111111111',
+    email: 'alice@example.com',
+    accessToken: 'jwt-alice',
+    authProvider: 'supabase-jwt',
+  };
+  const bobId = '2222bbbb-2222-4222-8222-222222222222';
+  const aliceProj = db.ensureDefaultProject(alice.id);
+
+  const forgedOwnerOutcome = await executeAuthenticatedReviewFlow(
+    {
+      projectId: aliceProj.id,
+      ownerId: bobId,
+      title: 'Forged Owner Review',
+      objective: 'Attempt to spoof ownerId in request body',
+      focusAreas: ['security'],
+      files: [sampleVulnFile],
+      analysisMode: 'static-only',
+    },
+    {
+      requestId: 'req-forged-owner',
+      authorizationHeader: `Bearer ${alice.accessToken}`,
+      verifyAccessTokenFn: async () => alice,
+      database: db,
+      invokeAiModel: null,
+    }
+  );
+  assert.equal(forgedOwnerOutcome.ok, false);
+  if (!forgedOwnerOutcome.ok) {
+    assert.equal(forgedOwnerOutcome.httpStatus, 403);
+    assert.equal(forgedOwnerOutcome.error.category, 'FORBIDDEN_PROJECT');
+  }
+
+  // 22f. Verify SQL migration composite constraints and Deno Edge Function runtime behavior
+  const migrationSql = fs.readFileSync(
+    path.join(rootDir, 'supabase/migrations/20261028000001_patchguard_phase1.sql'),
+    'utf8'
+  );
+  assert.match(migrationSql, /constraint projects_id_owner_unique\s+unique \(id, owner_id\)/i);
+  assert.match(
+    migrationSql,
+    /constraint reviews_id_project_owner_unique\s+unique \(id, project_id, owner_id\)/i
+  );
+  assert.match(
+    migrationSql,
+    /constraint reviews_project_owner_fk\s+foreign key \(project_id, owner_id\)\s+references public\.projects \(id, owner_id\)/i
+  );
+  assert.match(
+    migrationSql,
+    /constraint findings_review_project_owner_fk\s+foreign key \(review_id, project_id, owner_id\)\s+references public\.reviews \(id, project_id, owner_id\)/i
+  );
+
+  // Verify Deno import map and config.toml exist for Edge Functions
+  assert.equal(fs.existsSync(path.join(rootDir, 'supabase/functions/import_map.json')), true);
+  assert.equal(fs.existsSync(path.join(rootDir, 'supabase/functions/deno.json')), true);
+
+  // Invoke Edge Function handlers directly with standard Web Request objects
+  const healthRes = await handleHealthEdgeRequest(
+    new Request('https://edge.local/functions/v1/health', {
+      method: 'GET',
+      headers: { Origin: 'http://localhost:3000', 'X-Request-Id': 'edge-hc-test' },
+    })
+  );
+  assert.equal(healthRes.status, 200);
+  assert.equal(healthRes.headers.get('X-Request-Id'), 'edge-hc-test');
+  assert.equal(healthRes.headers.get('Vary'), 'Origin');
+  const healthBody = (await healthRes.json()) as Record<string, unknown>;
+  assert.equal(healthBody.status, 'ok');
+  assert.equal(healthBody.staticEngineVersion, STATIC_ANALYZER_VERSION);
+
+  // Edge analyze-review rejects non-POST with 405
+  const getEdgeRes = await handleAnalyzeReviewEdgeRequest(
+    new Request('https://edge.local/functions/v1/analyze-review', { method: 'GET' })
+  );
+  assert.equal(getEdgeRes.status, 405);
+
+  // Edge analyze-review without SUPABASE_URL configured returns 503 MISSING_SERVER_CONFIG
+  const unconfiguredEdgeRes = await handleAnalyzeReviewEdgeRequest(
+    new Request('https://edge.local/functions/v1/analyze-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Test' }),
+    })
+  );
+  assert.equal(unconfiguredEdgeRes.status, 503);
+  const unconfBody = (await unconfiguredEdgeRes.json()) as { error: { category: string } };
+  assert.equal(unconfBody.error.category, 'MISSING_SERVER_CONFIG');
+});
+
 
 
 

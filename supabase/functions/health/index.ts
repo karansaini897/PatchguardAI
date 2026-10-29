@@ -25,21 +25,42 @@ function readServerEnv(name: string): string | undefined {
   return undefined;
 }
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-request-id',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+function buildCorsHeaders(req: Request, requestId?: string): Record<string, string> {
+  const origin = req.headers.get('origin') || '';
+  const configuredOrigins = (readServerEnv('ALLOWED_ORIGINS') || readServerEnv('APP_URL') || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0 && o !== 'MY_APP_URL');
 
-export async function handleHealthEdgeRequest(req: Request): Promise<Response> {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: CORS_HEADERS });
+  let allowOrigin = '*';
+  if (configuredOrigins.length > 0) {
+    allowOrigin = configuredOrigins.includes(origin) ? origin : configuredOrigins[0];
+  } else if (origin) {
+    allowOrigin = origin;
   }
 
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers':
+      'authorization, x-client-info, apikey, content-type, x-request-id',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Expose-Headers': 'X-Request-Id',
+    Vary: 'Origin',
+  };
+  if (requestId) {
+    headers['X-Request-Id'] = requestId;
+  }
+  return headers;
+}
+
+export async function handleHealthEdgeRequest(req: Request): Promise<Response> {
   const requestId =
     req.headers.get('x-request-id') ||
     `edge-health-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: buildCorsHeaders(req, requestId) });
+  }
 
   const supabaseUrl = readServerEnv('SUPABASE_URL');
   const supabaseAnonKey = readServerEnv('SUPABASE_ANON_KEY');
@@ -64,9 +85,8 @@ export async function handleHealthEdgeRequest(req: Request): Promise<Response> {
     {
       status: 200,
       headers: {
-        ...CORS_HEADERS,
+        ...buildCorsHeaders(req, requestId),
         'Content-Type': 'application/json',
-        'X-Request-Id': requestId,
       },
     }
   );
@@ -75,3 +95,4 @@ export async function handleHealthEdgeRequest(req: Request): Promise<Response> {
 if (typeof Deno !== 'undefined' && typeof Deno?.serve === 'function') {
   Deno.serve(handleHealthEdgeRequest);
 }
+

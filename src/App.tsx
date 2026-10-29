@@ -138,24 +138,6 @@ export default function App() {
         setSessionExpiredMessage(restored.errorMessage);
       }
 
-      // If running in local preview without external VITE_SUPABASE_URL and user hasn't explicitly signed out,
-      // bootstrap the verified default developer session so live reviews and tests have a valid Bearer JWT.
-      const explicitlySignedOut =
-        typeof window !== 'undefined' &&
-        window.localStorage?.getItem(EXPLICIT_SIGNOUT_KEY) === '1';
-
-      if (!isLiveSupabaseClientConfigured && !explicitlySignedOut && !restored.sessionExpired) {
-        const autoSignIn = await signInUser('engineer@patchguard.dev', 'PatchGuard!2026');
-        if (mounted && autoSignIn.ok) {
-          setCurrentUser(autoSignIn.user);
-          setProjects(autoSignIn.projects);
-          if (autoSignIn.projects.length > 0) {
-            setActiveProjectId(autoSignIn.projects[0].id);
-          }
-          await syncReviewsForAuthenticatedUser(autoSignIn.user);
-        }
-      }
-
       if (mounted) {
         setIsAuthLoading(false);
       }

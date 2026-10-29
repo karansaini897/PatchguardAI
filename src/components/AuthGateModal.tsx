@@ -23,9 +23,11 @@ export const AuthGatePanel: React.FC<AuthGatePanelProps> = ({
   contextDescription = 'Sign in or create an account to execute code reviews, manage repository projects, and persist verified findings under Row Level Security (RLS).',
   onInspectDemoWithoutAuth,
 }) => {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
-  const [email, setEmail] = useState<string>('engineer@patchguard.dev');
-  const [password, setPassword] = useState<string>('PatchGuard!2026');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>(
+    isLiveSupabaseClientConfigured ? 'signin' : 'signup'
+  );
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
@@ -70,20 +72,6 @@ export const AuthGatePanel: React.FC<AuthGatePanelProps> = ({
       return;
     }
 
-    onAuthenticated(result.user, result.projects);
-  };
-
-  const handleQuickDeveloperSignIn = async () => {
-    if (isLoading) return;
-    setAuthError(null);
-    setAuthNotice(null);
-    setIsLoading(true);
-    const result = await signInUser('engineer@patchguard.dev', 'PatchGuard!2026');
-    setIsLoading(false);
-    if (!result.ok) {
-      setAuthError((result as { ok: false; error: string }).error);
-      return;
-    }
     onAuthenticated(result.user, result.projects);
   };
 
@@ -189,10 +177,6 @@ export const AuthGatePanel: React.FC<AuthGatePanelProps> = ({
               setMode('signup');
               setAuthError(null);
               setAuthNotice(null);
-              if (email === 'engineer@patchguard.dev') {
-                setEmail('');
-                setPassword('');
-              }
             }}
             className={`py-2 px-2 text-center transition-colors cursor-pointer ${
               mode === 'signup'
@@ -294,7 +278,7 @@ export const AuthGatePanel: React.FC<AuthGatePanelProps> = ({
           </button>
         </form>
 
-        {/* Honest Environment Configuration Disclosure & Quick Local Auth */}
+        {/* Honest Environment Configuration Disclosure */}
         <div className="pt-3 border-t border-[var(--pg-border-subtle)] space-y-3 text-[11px]">
           <div className="p-3 bg-[var(--pg-bg-workspace)] border border-[var(--pg-border-subtle)] space-y-1.5 font-mono">
             <div className="flex items-center gap-1.5 text-[var(--pg-info)] font-semibold">
@@ -302,28 +286,17 @@ export const AuthGatePanel: React.FC<AuthGatePanelProps> = ({
               <span>
                 {isLiveSupabaseClientConfigured
                   ? 'Connected to Live Supabase Project (VITE_SUPABASE_URL configured)'
-                  : 'Local RLS-Enforced Postgres Mirror Active (VITE_SUPABASE_URL not set)'}
+                  : 'Development-Only Local Auth Sandbox (VITE_SUPABASE_URL not set)'}
               </span>
             </div>
             <p className="font-sans text-[var(--pg-text-secondary)] leading-relaxed">
               {isLiveSupabaseClientConfigured
                 ? 'Credentials are verified directly against your Supabase Auth instance. Review records and findings are protected by PostgreSQL Row Level Security (auth.uid() = owner_id).'
-                : 'External VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set in this preview environment. The backend server is enforcing Bearer JWT authentication, project ownership checks, and RLS tenant isolation locally.'}
+                : 'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not yet configured. In non-production development mode, you can register a temporary local sandbox account (scrypt-hashed, in-memory only) to test RLS tenant isolation. This fallback is refused in production.'}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {!isLiveSupabaseClientConfigured && (
-              <button
-                type="button"
-                disabled={isLoading}
-                onClick={handleQuickDeveloperSignIn}
-                className="px-3 py-1.5 font-mono text-xs border border-[var(--pg-border-default)] bg-[var(--pg-bg-workspace)] text-[var(--pg-text-primary)] hover:border-[var(--pg-border-strong)] cursor-pointer"
-              >
-                Use Default Verified Session (engineer@patchguard.dev)
-              </button>
-            )}
-
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {onInspectDemoWithoutAuth && (
               <button
                 type="button"

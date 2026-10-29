@@ -250,7 +250,15 @@ export async function signUpUser(
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.user) {
-      return { ok: false, error: body.error || `Sign-up failed (HTTP ${res.status}).` };
+      const errMsg =
+        typeof body.error?.message === 'string'
+          ? body.error.message
+          : typeof body.message === 'string'
+          ? body.message
+          : typeof body.error === 'string'
+          ? body.error
+          : `Sign-up failed (HTTP ${res.status}).`;
+      return { ok: false, error: errMsg };
     }
     writeStoredLocalSession(body.user);
     return {
@@ -297,7 +305,15 @@ export async function signInUser(
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.user) {
-      return { ok: false, error: body.error || `Sign-in failed (HTTP ${res.status}).` };
+      const errMsg =
+        typeof body.error?.message === 'string'
+          ? body.error.message
+          : typeof body.message === 'string'
+          ? body.message
+          : typeof body.error === 'string'
+          ? body.error
+          : `Sign-in failed (HTTP ${res.status}).`;
+      return { ok: false, error: errMsg };
     }
     writeStoredLocalSession(body.user);
     return {
